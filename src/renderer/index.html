@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; font-src 'self' data:; img-src 'self' data:; connect-src 'self'" />
+<link rel="stylesheet" href="./app.css" />
+<style>
+  html, body { margin: 0; height: 100%; }
+  #toolbar { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: #1e1e1e; color: #ddd; font: 13px sans-serif; }
+  #toolbar button { background: #333; color: #ddd; border: 1px solid #555; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+  #toolbar button:hover { background: #444; }
+  #editor { height: calc(100% - 36px - 22px); }
+  #statusbars { height: 22px; display: flex; background: #1e1e1e; color: #9cdcfe; font: 12px monospace; }
+  #statusbars > div { flex: 1; padding: 0 8px; overflow: hidden; white-space: nowrap; opacity: 0.5; }
+  #statusbars > div.active { opacity: 1; }
+</style>
+</head>
+<body>
+  <div id="toolbar"></div>
+  <div id="editor"></div>
+  <div id="statusbars"><div id="vim-left"></div><div id="vim-right"></div></div>
+  <script src="./app.js"></script>
+</body>
+</html>
