@@ -21,8 +21,10 @@ const common = { bundle: true, sourcemap: true, logLevel: 'info' };
 
 const configs = [
   // 렌더러: monaco 포함, iife
+  // monaco-vim이 참조하는 editor.api를 monaco-editor 메인에 매핑(단일 monaco 인스턴스 보장)
   { ...common, entryPoints: ['src/renderer/app.js'], outfile: out('renderer/app.js'),
-    platform: 'browser', format: 'iife', loader: { '.ttf': 'file' } },
+    platform: 'browser', format: 'iife', loader: { '.ttf': 'file' },
+    alias: { 'monaco-editor/esm/vs/editor/editor.api': 'monaco-editor/esm/vs/editor/editor.api.js' } },
   // 워커: classic(iife), browser
   ...Object.entries(WORKERS).map(([name, entry]) => ({
     ...common, entryPoints: [entry], outfile: out(`renderer/${name}.js`),
