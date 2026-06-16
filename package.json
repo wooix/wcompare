@@ -1,0 +1,24 @@
+{
+  "name": "wcompare",
+  "version": "0.1.0",
+  "description": "Simple side-by-side file compare with syntax, lint, vim",
+  "main": "src/main/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "dev": "node esbuild.mjs --watch & electron .",
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "e2e": "npm run build && playwright test"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "monaco-editor": "^0.55.1",
+    "monaco-vim": "^0.4.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0",
+    "electron": "^42.4.0",
+    "esbuild": "^0.28.1"
+  }
+}
