@@ -50,6 +50,19 @@ vim 모드는 기본 ON입니다. 포커스된 패널이 키를 받으며, 하�
   열린 파일 옆의 설정 파일이 lint 시 자동 실행되어 임의 코드가 도는 것(RCE)을 막기 위함입니다.
 - 진단은 편집기에 마커(빨간/노란 물결)로 표시되고, 파일 저장·편집(디바운스) 시 갱신됩니다.
 
+## PDF 동기 스크롤 뷰어
+
+동일 format의 PDF 2개(예: 같은 문서의 영어판·한글판)를 좌/우에 띄우고 **함께 스크롤**합니다.
+
+- **진입**: `.pdf` 파일을 열면 자동으로 PDF 모드로 전환됩니다(`electron . a.pdf b.pdf`, 파일 대화상자, 드래그앤드롭). 툴바 **PDF Mode / Diff Mode** 버튼으로 수동 전환도 됩니다.
+- **스크롤 동기**: 한쪽을 스크롤하면 다른 쪽이 **비율 기반**으로 같이 움직입니다(양방향). 페이지 높이가 조금 달라도 비례로 따라갑니다.
+- **줌**: 툴바 `−` / `+` 로 양쪽이 같은 배율로 확대·축소됩니다.
+- **동기 토글**: `Sync: ON/OFF` 버튼으로 한쪽만 따로 볼 수 있고, 다시 켜면 즉시 재정렬됩니다.
+- **페이지**: 상단 `Page n / N` 입력으로 양쪽이 함께 이동하고, 하단 상태바에 `L n/N  R n/N  배율%`가 표시됩니다.
+
+렌더링은 [pdf.js](https://mozilla.github.io/pdf.js/)(`pdfjs-dist`)에 위임하며, PDF는 읽기 전용입니다.
+PDF 워커도 Monaco 워커처럼 `app://` same-origin으로 로드되어 `sandbox:true`를 유지합니다.
+
 ## 개발: 테스트
 
 ```bash
@@ -60,7 +73,7 @@ npm run e2e        # E2E(@playwright/test + Electron) — 빌드 후 실행
 ## 아키텍처
 
 - **메인 프로세스**(`src/main/`): 파일 IO + linter CLI spawn + IPC. 시스템 접근을 전담.
-- **렌더러**(`src/renderer/`): Monaco DiffEditor + vim + lint 마커 + UI.
+- **렌더러**(`src/renderer/`): Monaco DiffEditor + vim + lint 마커, PDF 듀얼 뷰어(pdf.js + 비율 동기 스크롤), 모드 전환 UI.
 - **보안**: `sandbox:true` + `contextIsolation:true`, `app://` 커스텀 스킴(워커 same-origin 로딩),
   CSP, 경로 화이트리스트 기반 쓰기, 외부 네비게이션 차단.
 
