@@ -40,7 +40,8 @@ async function copyStatic() {
   await mkdir(out('renderer'), { recursive: true });
   await cp('src/renderer/index.html', out('renderer/index.html'));
   await cp('node_modules/pdfjs-dist/web/pdf_viewer.css', out('renderer/pdf_viewer.css'));
-  console.log('[esbuild] copied index.html + pdf_viewer.css');
+  await cp('node_modules/pdfjs-dist/web/images', out('renderer/images'), { recursive: true });
+  console.log('[esbuild] copied index.html + pdf_viewer.css + images');
 }
 
 if (watch) {
