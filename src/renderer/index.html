@@ -3,23 +3,53 @@
 <head>
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy"
-  content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; font-src 'self' data:; img-src 'self' data:; connect-src 'self'" />
+  content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'" />
 <link rel="stylesheet" href="./app.css" />
+<link rel="stylesheet" href="./pdf_viewer.css" />
 <style>
-  html, body { margin: 0; height: 100%; }
+  html, body { margin: 0; height: 100%; background:#1e1e1e; }
   #toolbar { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: #1e1e1e; color: #ddd; font: 13px sans-serif; }
   #toolbar button { background: #333; color: #ddd; border: 1px solid #555; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
   #toolbar button:hover { background: #444; }
-  #editor { height: calc(100% - 36px - 22px); }
+  #toolbar input { background:#222; color:#ddd; border:1px solid #555; border-radius:4px; }
+  #diff-controls, #pdf-controls { display:flex; align-items:center; gap:6px; color:#bbb; }
+  #editor, #pdfview { height: calc(100% - 36px - 22px); }
+  #pdfview { display:none; }
+  .pdf-pane { flex:1; position:relative; min-width:0; border-right:1px solid #333; }
+  .pdf-pane:last-child { border-right:none; }
+  .pdf-container { position:absolute; inset:0; overflow:auto; background:#2a2a2a; }
+  .pdfViewer .page { margin:8px auto; border:1px solid #444; }
   #statusbars { height: 22px; display: flex; background: #1e1e1e; color: #9cdcfe; font: 12px monospace; }
   #statusbars > div { flex: 1; padding: 0 8px; overflow: hidden; white-space: nowrap; opacity: 0.5; }
   #statusbars > div.active { opacity: 1; }
+  #pdf-status { display:none; height:22px; background:#1e1e1e; color:#9cdcfe; font:12px monospace; align-items:center; padding:0 8px; }
 </style>
 </head>
 <body>
-  <div id="toolbar"></div>
+  <div id="toolbar">
+    <button id="btn-open-left">Open Left</button>
+    <button id="btn-open-right">Open Right</button>
+    <button id="btn-mode">PDF Mode</button>
+    <span id="diff-controls">
+      <button id="btn-save">Save</button>
+      <button id="btn-prev-diff">◀ Diff</button>
+      <button id="btn-next-diff">Diff ▶</button>
+      <button id="btn-ws">Whitespace</button>
+      <button id="btn-vim">Vim</button>
+    </span>
+    <span id="pdf-controls" style="display:none">
+      <button id="btn-zoom-out">−</button>
+      <button id="btn-zoom-in">+</button>
+      <span>Page <input id="pdf-page" type="number" min="1" value="1" style="width:46px" /> / <span id="pdf-total">0</span></span>
+      <button id="btn-sync">Sync: ON</button>
+    </span>
+    <button id="btn-theme">Theme</button>
+    <span id="toolbar-status" style="margin-left:auto; color:#9cdcfe; font:12px monospace;"></span>
+  </div>
   <div id="editor"></div>
+  <div id="pdfview"></div>
   <div id="statusbars"><div id="vim-left"></div><div id="vim-right"></div></div>
+  <div id="pdf-status"></div>
   <script src="./app.js"></script>
 </body>
 </html>
