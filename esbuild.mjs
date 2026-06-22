@@ -15,6 +15,7 @@ const WORKERS = {
   'css.worker': 'monaco-editor/esm/vs/language/css/css.worker.js',
   'html.worker': 'monaco-editor/esm/vs/language/html/html.worker.js',
   'ts.worker': 'monaco-editor/esm/vs/language/typescript/ts.worker.js',
+  'pdf.worker': 'pdfjs-dist/build/pdf.worker.mjs',
 };
 
 const common = { bundle: true, sourcemap: true, logLevel: 'info' };
@@ -38,7 +39,8 @@ const configs = [
 async function copyStatic() {
   await mkdir(out('renderer'), { recursive: true });
   await cp('src/renderer/index.html', out('renderer/index.html'));
-  console.log('[esbuild] copied index.html');
+  await cp('node_modules/pdfjs-dist/web/pdf_viewer.css', out('renderer/pdf_viewer.css'));
+  console.log('[esbuild] copied index.html + pdf_viewer.css');
 }
 
 if (watch) {
