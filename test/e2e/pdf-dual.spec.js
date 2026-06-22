@@ -60,6 +60,28 @@ test('줌+ 시 배율 증가(양쪽)', async () => {
   fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
 });
 
+test('줌 단축키: Ctrl+휠 / Cmd·Ctrl +,- 로 배율 변경', async () => {
+  const { a, b } = writePair('zk' + Date.now());
+  const app = await electron.launch({ args: [MAIN, a, b] });
+  const win = await app.firstWindow();
+  await win.waitForSelector(`${leftC} canvas`, { timeout: 20000 });
+  const pct = () => win.evaluate(() => { const m = /([0-9]+)%/.exec(document.getElementById('pdf-status').textContent || ''); return m ? +m[1] : 0; });
+  const base = await pct();
+  // Ctrl + wheel up → 확대
+  await win.evaluate((sel) => document.querySelector(sel).dispatchEvent(new WheelEvent('wheel', { deltaY: -120, ctrlKey: true, bubbles: true, cancelable: true })), leftC);
+  await win.waitForFunction((b0) => { const m = /([0-9]+)%/.exec(document.getElementById('pdf-status').textContent || ''); return m && +m[1] > b0; }, base, { timeout: 5000 });
+  const afterWheel = await pct();
+  // Cmd/Ctrl + '=' → 확대
+  await win.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: '=', metaKey: true, ctrlKey: true, bubbles: true, cancelable: true })));
+  await win.waitForFunction((b0) => { const m = /([0-9]+)%/.exec(document.getElementById('pdf-status').textContent || ''); return m && +m[1] > b0; }, afterWheel, { timeout: 5000 });
+  const afterPlus = await pct();
+  // Cmd/Ctrl + '-' → 축소
+  await win.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: '-', metaKey: true, ctrlKey: true, bubbles: true, cancelable: true })));
+  await win.waitForFunction((b0) => { const m = /([0-9]+)%/.exec(document.getElementById('pdf-status').textContent || ''); return m && +m[1] < b0; }, afterPlus, { timeout: 5000 });
+  await app.close();
+  fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
+});
+
 test('페이지 점프: 양쪽 이동', async () => {
   const { a, b } = writePair('page' + Date.now());
   const app = await electron.launch({ args: [MAIN, a, b] });

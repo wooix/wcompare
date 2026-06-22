@@ -18,6 +18,8 @@ function createWindow() {
     },
   });
   win.loadURL(APP_ORIGIN + 'index.html');
+  // 핀치/비주얼 줌 잠금 — 렌더러의 Ctrl+휠/단축키 PDF 줌과 충돌하는 페이지 전체 줌 방지.
+  win.webContents.setVisualZoomLevelLimits(1, 1);
   win.webContents.once('did-finish-load', () => {
     if (initialPair.left) allowPath(initialPair.left);
     if (initialPair.right) allowPath(initialPair.right);

@@ -44,6 +44,12 @@ export function createDualView(hostEl) {
   for (const side of ['left', 'right']) {
     viewers[side].el.addEventListener('scroll', () => onScroll(side));
     viewers[side].onPageChange(() => emit());
+    // Ctrl(또는 trackpad 핀치) + 휠 → 줌. 브라우저 기본 페이지 줌 차단 위해 passive:false + preventDefault.
+    viewers[side].el.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      zoom(e.deltaY < 0 ? 1 : -1);
+    }, { passive: false });
   }
 
   async function openSide(side, { bytes }) {

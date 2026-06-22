@@ -118,6 +118,14 @@ $('btn-zoom-in').onclick = () => dualView?.zoom(1);
 $('btn-sync').onclick = () => dualView?.setSync(!dualView.isSync());
 $('pdf-page').onchange = (e) => dualView?.gotoPage(parseInt(e.target.value, 10) || 1);
 
+// 줌 단축키 (PDF 모드): Cmd/Ctrl + '+'(또는 '=') / '-'. 브라우저 기본 페이지 줌 차단.
+window.addEventListener('keydown', (e) => {
+  if (mode !== 'pdf' || !dualView) return;
+  if (!(e.metaKey || e.ctrlKey)) return;
+  if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') { e.preventDefault(); dualView.zoom(1); }
+  else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') { e.preventDefault(); dualView.zoom(-1); }
+});
+
 // 복사 화살표 (diff)
 editorApi.innerOf('left').addCommand(monaco.KeyMod.Alt | monaco.KeyCode.RightArrow, () => editorApi.copyCurrentBlock('left', 'right'));
 editorApi.innerOf('right').addCommand(monaco.KeyMod.Alt | monaco.KeyCode.LeftArrow, () => editorApi.copyCurrentBlock('right', 'left'));
