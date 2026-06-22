@@ -2,7 +2,7 @@
 const { ipcMain, dialog, BrowserWindow } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
-const { readFile, writeFile } = require('./fileService.js');
+const { readFile, writeFile, readBytes } = require('./fileService.js');
 const { lint } = require('./lint/lintService.js');
 
 // 현재 세션에서 열린(=쓰기 허용) 경로 화이트리스트
@@ -39,6 +39,13 @@ function registerIpc() {
     if (!allowed.has(p)) throw new Error('write denied: path not in session whitelist');
     writeFile(p, content, { eol, encoding, bom });
     return { ok: true, mtimeMs: fs.statSync(p).mtimeMs };
+  });
+
+  ipcMain.handle('file:readBytes', (_e, rawPath) => {
+    const p = normalize(rawPath);
+    allowed.add(p);
+    const { bytes, byteSize } = readBytes(p);
+    return { path: p, ext: path.basename(p), bytes, byteSize };
   });
 
   ipcMain.handle('lint:run', (_e, payload) => lint(payload));

@@ -32,4 +32,9 @@ function writeFile(filePath, content, opts) {
   fs.writeFileSync(filePath, out);
 }
 
-module.exports = { readFile, writeFile, detectEol, isBinary };
+function readBytes(filePath) {
+  const bytes = fs.readFileSync(filePath);
+  return { bytes, byteSize: bytes.length };
+}
+
+module.exports = { readFile, writeFile, detectEol, isBinary, readBytes };

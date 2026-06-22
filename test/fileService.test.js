@@ -37,3 +37,14 @@ test('writeFile 왕복 + BOM 보존', () => {
   assert.deepEqual(raw.subarray(0, 3), Buffer.from([0xEF, 0xBB, 0xBF]));
   fs.unlinkSync(p);
 });
+
+test('readBytes: 파일 바이트와 크기 반환', () => {
+  const p = path.join(os.tmpdir(), 'wc-bytes-' + Date.now() + '.bin');
+  fs.writeFileSync(p, Buffer.from([0x25, 0x50, 0x44, 0x46])); // %PDF
+  const { readBytes } = require('../src/main/fileService.js');
+  const r = readBytes(p);
+  assert.equal(r.byteSize, 4);
+  assert.ok(Buffer.isBuffer(r.bytes));
+  assert.equal(r.bytes[0], 0x25);
+  fs.unlinkSync(p);
+});

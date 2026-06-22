@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('wcompare', {
   openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
   readFile: (path) => ipcRenderer.invoke('file:read', path),
+  readBytes: (path) => ipcRenderer.invoke('file:readBytes', path),
   writeFile: (payload) => ipcRenderer.invoke('file:write', payload),
   lint: (payload) => ipcRenderer.invoke('lint:run', payload),
   // 드롭된 File에서 OS 경로 추출 (최신 Electron은 File.path 제거 → webUtils 사용)
