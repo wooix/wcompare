@@ -73,7 +73,7 @@ function setMode(m) {
   $('statusbars').style.display = m === 'diff' ? 'flex' : 'none';
   $('pdf-status').style.display = m === 'pdf' ? 'flex' : 'none';
   $('btn-mode').textContent = m === 'diff' ? 'PDF Mode' : 'Diff Mode';
-  if (m === 'diff') refreshStatus();
+  if (m === 'diff') refreshStatus(); else setStatus('');
 }
 async function openPdf(side, p) {
   try {
