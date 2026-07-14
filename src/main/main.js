@@ -1,7 +1,10 @@
-const { app, BrowserWindow, shell, Menu } = require('electron');
+const { app, BrowserWindow, shell } = require('electron');
 const path = require('node:path');
 const { registerScheme, handleScheme, APP_ORIGIN } = require('./scheme');
-const { registerIpc, allowPath } = require('./ipc');
+const { registerIpc, cancelTranslation } = require('./ipc');
+const { allowPath } = require('./allowlist');
+const { applyMenu } = require('./menu');
+const project = require('./project');
 const { parsePair } = require('./cli');
 
 app.enableSandbox();
@@ -36,29 +39,12 @@ app.whenReady().then(() => {
   initialPair = parsePair(process.argv, app.isPackaged);
   handleScheme();
   registerIpc();
-  Menu.setApplicationMenu(buildMenu());
+  project.setOnChange(applyMenu); // 최근 목록이 바뀌면 메뉴를 다시 세팅
+  applyMenu();
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+// 번역 중 종료해도 transpaper/agy가 백그라운드에 남지 않게 프로세스 그룹째 정리한다.
+app.on('will-quit', () => cancelTranslation());
 
-function buildMenu() {
-  const send = (ch) => { const w = BrowserWindow.getFocusedWindow(); if (w) w.webContents.send(ch); };
-  return Menu.buildFromTemplate([
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
-    { label: 'File', submenu: [
-      { label: 'Open Left…', accelerator: 'CmdOrCtrl+O', click: () => send('menu:open-left') },
-      { label: 'Open Right…', accelerator: 'CmdOrCtrl+Shift+O', click: () => send('menu:open-right') },
-      { label: 'Save', accelerator: 'CmdOrCtrl+S', click: () => send('menu:save') },
-      { type: 'separator' }, { role: 'quit' },
-    ]},
-    { label: 'View', submenu: [
-      { label: 'Next Diff', accelerator: 'F7', click: () => send('menu:next-diff') },
-      { label: 'Prev Diff', accelerator: 'Shift+F7', click: () => send('menu:prev-diff') },
-      { label: 'Toggle Whitespace', click: () => send('menu:toggle-ws') },
-      { label: 'Toggle Vim', click: () => send('menu:toggle-vim') },
-      { label: 'Toggle Theme', click: () => send('menu:toggle-theme') },
-      { type: 'separator' }, { role: 'toggleDevTools' },
-    ]},
-  ]);
-}

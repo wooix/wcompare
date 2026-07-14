@@ -11,13 +11,35 @@
   #toolbar { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: #1e1e1e; color: #ddd; font: 13px sans-serif; }
   #toolbar button { background: #333; color: #ddd; border: 1px solid #555; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
   #toolbar button:hover { background: #444; }
+  #toolbar button:disabled { opacity: 0.4; cursor: default; background: #333; }
   #toolbar input { background:#222; color:#ddd; border:1px solid #555; border-radius:4px; }
   #diff-controls, #pdf-controls { display:flex; align-items:center; gap:6px; color:#bbb; }
+  #pdf-find-count { min-width:104px; font:11px monospace; color:#9cdcfe; }
+  #pdf-find-count.miss { color:#f48771; }
   #editor, #pdfview { height: calc(100% - 36px - 22px); }
   #pdfview { display:none; }
   .pdf-pane { flex:1; position:relative; min-width:0; border-right:1px solid #333; }
   .pdf-pane:last-child { border-right:none; }
   .pdf-container { position:absolute; inset:0; overflow:auto; background:#2a2a2a; }
+  /* 마커(형광펜/밑줄). 페이지 div의 마지막 자식으로 붙고, 좌표는 % 라 줌/리사이즈를 CSS가 따라간다.
+     pointer-events:none 이라 텍스트 선택·링크 클릭을 가로막지 않는다. */
+  .wc-marker-layer { position:absolute; inset:0; pointer-events:none; z-index:3; }
+  .wc-mark { position:absolute; }
+  .wc-mark-highlight { mix-blend-mode:multiply; border-radius:2px; } /* 글자가 비쳐 보이게 */
+  .wc-mark-underline { box-shadow: inset 0 -2px 0 currentColor; }
+
+  /* 오래 걸리는 작업(번역)을 해당 pane 위에 겹쳐 표시 */
+  .pdf-busy { position:absolute; inset:0; z-index:5; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:8px; background:#2a2a2ae6;
+    color:#ddd; font:13px sans-serif; text-align:center; padding:16px; }
+  .pdf-busy-spin { width:26px; height:26px; border:3px solid #555; border-top-color:#9cdcfe;
+    border-radius:50%; animation:pdf-spin 0.9s linear infinite; }
+  @keyframes pdf-spin { to { transform:rotate(360deg); } }
+  .pdf-busy-title { font-size:14px; color:#fff; }
+  .pdf-busy-sub { color:#9cdcfe; font:12px monospace; }
+  .pdf-busy-bar { width:min(260px, 70%); height:4px; background:#444; border-radius:2px; overflow:hidden; }
+  .pdf-busy-bar > i { display:block; height:100%; background:#9cdcfe; width:0; transition:width .3s; }
+  .pdf-busy-hint { color:#888; font-size:11px; }
   .pdfViewer .page { margin:8px auto; border:1px solid #444; }
   #statusbars { height: 22px; display: flex; background: #1e1e1e; color: #9cdcfe; font: 12px monospace; }
   #statusbars > div { flex: 1; padding: 0 8px; overflow: hidden; white-space: nowrap; opacity: 0.5; }
@@ -38,10 +60,19 @@
       <button id="btn-vim">Vim</button>
     </span>
     <span id="pdf-controls" style="display:none">
+      <button id="btn-back" title="뒤로 (⌘←, 마우스 뒤로 버튼)">◀</button>
+      <button id="btn-forward" title="앞으로 (⌘→, 마우스 앞으로 버튼)">▶</button>
       <button id="btn-zoom-out">−</button>
       <button id="btn-zoom-in">+</button>
       <span>Page <input id="pdf-page" type="number" min="1" value="1" style="width:46px" /> / <span id="pdf-total">0</span></span>
+      <input id="pdf-find" type="text" placeholder="찾기 (⌘F)" style="width:120px" />
+      <button id="btn-find-prev" title="이전 일치 (⇧Enter)">▲</button>
+      <button id="btn-find-next" title="다음 일치 (Enter)">▼</button>
+      <span id="pdf-find-count"></span>
+      <button id="btn-fit">Fit: ON</button>
       <button id="btn-sync">Sync: ON</button>
+      <button id="btn-switch">⇄ Switch</button>
+      <button id="btn-translate">한국어 번역 ▶</button>
     </span>
     <button id="btn-theme">Theme</button>
     <span id="toolbar-status" style="margin-left:auto; color:#9cdcfe; font:12px monospace;"></span>
