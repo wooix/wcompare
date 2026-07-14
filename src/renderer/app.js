@@ -161,12 +161,14 @@ async function translatePdf() {
   translateDone = 0;
   translateTotal = pdfState?.[side]?.count || 0;
   updatePdfBtns();
-  showTranslateProgress('준비 중…');
+  // 분모(전체 페이지 수)는 이미 알고 있으므로 처음부터 "0 / N 페이지"로 보여준다.
+  // 1페이지 = agy 1회 호출 = 진행 1틱. 첫 틱은 1쪽 번역이 끝나야 오므로 그동안은 0/N.
+  showTranslateProgress();
   try {
     let res = await window.wcompare.translatePdf({ path: src });
     if (res.existed) {
       const again = confirm('이미 번역본이 있습니다.\n\n[확인] 다시 번역하기\n[취소] 기존 번역본 열기');
-      if (again) { showTranslateProgress('준비 중…'); res = await window.wcompare.translatePdf({ path: src, force: true }); }
+      if (again) { translateDone = 0; showTranslateProgress(); res = await window.wcompare.translatePdf({ path: src, force: true }); }
     }
     await openPdf(translateTarget, res.output);
     if (res.partial) alert('일부 페이지는 번역에 실패해 원문 그대로 유지되었습니다.');

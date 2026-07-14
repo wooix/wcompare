@@ -25,7 +25,10 @@ function pathDirs(env = process.env, extraDirs = EXTRA_BIN_DIRS) {
 }
 
 function envWithPath(env = process.env) {
-  return { ...env, PATH: pathDirs(env).join(path.delimiter) };
+  // PYTHONUNBUFFERED: transpaper는 Python이라 stdout이 파이프면 블록 버퍼링(~8KB)이 걸린다.
+  // 진행 줄("page N: ...")이 40바이트 남짓이라 버퍼를 못 채워, 끄면 전부 프로세스 종료 시점에
+  // 몰아서 flush된다 → 실시간 진행률이 안 나온다. 켜면 페이지마다 즉시 도착한다.
+  return { ...env, PATH: pathDirs(env).join(path.delimiter), PYTHONUNBUFFERED: '1' };
 }
 
 function isExec(p) {
