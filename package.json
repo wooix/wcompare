@@ -9,7 +9,8 @@
     "dev": "node esbuild.mjs --watch & electron .",
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "e2e": "npm run build && playwright test"
+    "e2e": "npm run build && playwright test",
+    "package:mac": "npm run build && node scripts/pack-mac.mjs"
   },
   "license": "MIT",
   "dependencies": {
