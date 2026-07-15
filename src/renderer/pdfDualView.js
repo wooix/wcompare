@@ -1,7 +1,7 @@
 // src/renderer/pdfDualView.js — 두 PDFViewer를 좌/우 배치 + 비율 스크롤/줌/페이지/토글 동기.
 import { createPdfViewer } from './pdfViewer.js';
 import { syncTargetTop, syncTargetLeft } from './syncScroll.js';
-import { createMarkerLayer } from './pdfMarkers.js';
+import { createMarkerLayer, newId } from './pdfMarkers.js';
 
 // 오래 걸리는 작업(번역)을 해당 pane 위에 겹쳐 보여주는 오버레이.
 function createBusy(paneEl) {
@@ -37,6 +37,7 @@ export function createDualView(hostEl) {
   const panes = {};
   const busy = {};
   const marks = {};
+  const outlines = {};
   // 마커는 side가 아니라 "문서"에 묶는다 → switch 해도 마커가 문서를 따라간다.
   const markerStore = new Map(); // 문서경로 -> 마커[]
   for (const side of SIDES) {
@@ -45,7 +46,16 @@ export function createDualView(hostEl) {
     pane.dataset.side = side;
     hostEl.appendChild(pane);
     panes[side] = pane;
-    viewers[side] = createPdfViewer(pane);
+    // 목차 드로어는 뷰어를 "겹치지 않고" flex 2열로 밀어낸다 — 겹치면 page-width 페이지의
+    // 왼쪽이 가려지므로, 열고 닫을 때 applyFit으로 폭을 다시 계산한다.
+    const outline = document.createElement('div');
+    outline.className = 'pdf-outline';
+    pane.appendChild(outline);
+    outlines[side] = outline;
+    const viewerHost = document.createElement('div');
+    viewerHost.className = 'pdf-viewer-host';
+    pane.appendChild(viewerHost);
+    viewers[side] = createPdfViewer(viewerHost);
     marks[side] = createMarkerLayer(viewers[side], markerStore);
     busy[side] = createBusy(pane); // 뷰어 뒤에 붙여 위에 겹치게
   }
@@ -53,6 +63,7 @@ export function createDualView(hostEl) {
   let syncEnabled = true;
   let syncing = false;
   let fitWidth = true; // 최초 로드가 page-width라 켜진 상태로 시작
+  let outlineOpen = false;
   const loaded = { left: false, right: false };
   const stateCbs = [];
 
@@ -73,6 +84,7 @@ export function createDualView(hostEl) {
       scale: baseScale(),
       canBack: hist.back.length > 0,
       canForward: hist.fwd.length > 0,
+      outline: outlineOpen,
     };
     stateCbs.forEach((cb) => cb(st));
   }
@@ -190,6 +202,7 @@ export function createDualView(hostEl) {
     // fit이 꺼져 있으면 반대편이 쓰던 배율에 맞춘다 (자기 배율을 읽으면 방금 적용된 page-width가 나온다).
     if (fitWidth) applyFit();
     else if (loaded[other(side)]) viewers[side].setScale(viewers[other(side)].getScale());
+    if (outlineOpen) { panes[side].classList.add('outline-open'); refreshOutline(side); }
     refind();
     emit();
   }
@@ -269,6 +282,12 @@ export function createDualView(hostEl) {
     }
     hist.back.length = 0; // 문서가 바뀌었으므로 링크 히스토리는 무효
     hist.fwd.length = 0;
+    if (outlineOpen) {
+      for (const s of SIDES) {
+        panes[s].classList.toggle('outline-open', loaded[s]);
+        if (loaded[s]) refreshOutline(s); // 목차도 문서를 따라간다
+      }
+    }
     refind();
     realign();
     emit();
@@ -291,31 +310,177 @@ export function createDualView(hostEl) {
     return {
       hasSelection: !!pending.capture,
       markerId: marks[side].markerAt(clientX, clientY),
+      hasDoc: !!loaded[side],
+      // 미러 점프 가능: 반대편이 열려 있고, 커서가 렌더된 페이지 위일 때
+      canMirror: !!loaded[other(side)] && !!marks[side].locate(clientX, clientY),
     };
   }
   // 우클릭 메뉴 경로: contextInfo()가 미리 잡아 둔 캡처를 쓴다.
-  function addMarker(kind) {
-    if (!pending?.capture) return markSelection(kind);
-    marks[pending.side].add(pending.capture, kind);
+  function addMarker(kind, color) {
+    if (!pending?.capture) return markSelection(kind, color);
+    mirror(pending.side, marks[pending.side].add(pending.capture, kind, color));
     window.getSelection()?.removeAllRanges();
     pending = null;
     return true;
   }
 
   // 단축키 경로: 지금 살아 있는 선택을 그 자리에서 캡처한다. 어느 pane인지도 선택에서 알아낸다.
-  function markSelection(kind) {
+  function markSelection(kind, color) {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.anchorNode) return false;
     const side = SIDES.find((s) => panes[s].contains(sel.anchorNode));
     if (!side) return false;
     const capture = marks[side].captureSelection(panes[side]);
     if (!capture) return false;
-    marks[side].add(capture, kind);
+    mirror(side, marks[side].add(capture, kind, color));
     sel.removeAllRanges();
     return true;
   }
+
+  // ===== 마커 미러링 =====
+  // transpaper 오버레이 번역은 페이지 지오메트리를 보존한다 → 원문 p.N의 (x,y,w,h) 정규화
+  // 좌표는 번역본에서도 같은 내용을 가리킨다. 문서쌍이 양쪽에 열려 있으면 한쪽에 그은 마커를
+  // 반대편 문서에도 자동 생성한다(쌍은 공통 group id로 묶여 함께 지워진다).
+  let pairKeys = null; // 번역 완료 시 app.js가 명시 등록. 파일명 규칙으로도 자동 감지한다.
+  function setPair(a, b) { pairKeys = a && b ? [a, b] : null; }
+  // transpaper outputPathFor 규칙: <이름>.pdf ↔ <이름>.ko.pdf
+  function autoPairOf(key) {
+    const auto = /\.ko\.pdf$/i.test(key)
+      ? key.replace(/\.ko\.pdf$/i, '.pdf')
+      : key.replace(/\.pdf$/i, '.ko.pdf');
+    return auto !== key ? auto : null;
+  }
+  function pairOf(key) {
+    if (!key) return null;
+    if (pairKeys) {
+      if (key === pairKeys[0]) return pairKeys[1];
+      if (key === pairKeys[1]) return pairKeys[0];
+    }
+    return autoPairOf(key);
+  }
+
+  function mirror(side, made) {
+    if (!made?.length) return;
+    const dstKey = pairOf(marks[side].getDoc());
+    // 쌍 문서가 화면에 없으면 미러하지 않는다 — 저장 스냅샷이 side 기준이라 어차피 유실된다.
+    const dstSide = dstKey && SIDES.find((s) => marks[s].getDoc() === dstKey);
+    if (!dstSide) return;
+    let arr = markerStore.get(dstKey);
+    if (!arr) { arr = []; markerStore.set(dstKey, arr); }
+    for (const m of made) {
+      m.group ||= `g${newId()}`; // 원본·미러가 공유하는 그룹 — 삭제가 쌍으로 전파된다
+      arr.push({ ...m, id: newId(), origin: 'mirror', rects: m.rects.map((r) => ({ ...r })) });
+      marks[dstSide].renderPage(m.page);
+    }
+  }
+
   function removeMarker(side, id) {
-    if (id) marks[side].remove(id);
+    if (!id) return;
+    const key = marks[side].getDoc();
+    const target = key && (markerStore.get(key) || []).find((m) => m.id === id);
+    marks[side].remove(id);
+    // 미러 쌍(같은 group)이 반대편 문서에 있으면 함께 지운다.
+    const g = target?.group;
+    const dstKey = g && pairOf(key);
+    if (!dstKey) return;
+    const twin = (markerStore.get(dstKey) || []).find((m) => m.group === g);
+    const dstSide = twin && SIDES.find((s) => marks[s].getDoc() === dstKey);
+    if (dstSide) marks[dstSide].remove(twin.id);
+  }
+
+  // ===== 미러 점프 =====
+  // Alt+클릭한 지점과 "같은 페이지·같은 위치"로 반대편을 스크롤하고 도착점을 펄스로 표시한다.
+  // 좌표 동형성(오버레이 번역)이 전제. 이동 직전 위치는 링크 히스토리에 쌓여 ⌘←로 복귀한다.
+  function jumpMirror(side, clientX, clientY) {
+    const at = marks[side].locate(clientX, clientY);
+    const to = other(side);
+    if (!at || !loaded[to]) return false;
+    const tv = viewers[to];
+    const page = Math.min(tv.pageCount() || 1, at.page);
+
+    hist.back.push(snapshot());
+    if (hist.back.length > HIST_MAX) hist.back.shift();
+    hist.fwd.length = 0;
+
+    tv.scrollToPage(page);
+    // scrollToPage 직후 대상 페이지는 미렌더일 수 있다 → 항상 존재하는 pageDiv 기준으로 보정
+    // (textLayer는 화면 밖에서 파괴된다). 1px border 오차는 무시 가능.
+    requestAnimationFrame(() => {
+      const pd = tv.pageDivOf(page);
+      if (pd) {
+        tv.el.scrollTop = pd.offsetTop + at.y * pd.offsetHeight - tv.el.clientHeight / 2;
+        const pulse = document.createElement('div');
+        pulse.className = 'wc-pulse';
+        pulse.style.left = `${at.x * 100}%`;
+        pulse.style.top = `${at.y * 100}%`;
+        pd.appendChild(pulse); // 일회성 — reset()에 지워져도 애니메이션 수명(1.5s)이면 충분
+        setTimeout(() => pulse.remove(), 1600);
+      }
+      emit();
+    });
+    return true;
+  }
+
+  // ===== 목차 (TOC) =====
+  async function refreshOutline(side) {
+    const el = outlines[side];
+    el.replaceChildren();
+    let items = null;
+    try { items = await viewers[side].getOutline(); } catch { /* 목차 없음으로 취급 */ }
+    if (!items?.length) {
+      const d = document.createElement('div');
+      d.className = 'toc-empty';
+      d.textContent = '(목차 없음)';
+      el.appendChild(d);
+      return;
+    }
+    el.appendChild(renderOutlineItems(items, side));
+  }
+
+  function renderOutlineItems(items, side) {
+    const frag = document.createDocumentFragment();
+    for (const it of items) {
+      const row = document.createElement('div');
+      row.className = 'toc-item';
+      const tog = document.createElement('span');
+      tog.className = 'toc-toggle';
+      const title = document.createElement('span');
+      title.className = 'toc-title';
+      title.textContent = it.title || '(제목 없음)';
+      row.append(tog, title);
+      if (it.dest) {
+        // goToDestination은 pdfViewer의 몽키패치를 지난다 → 뒤로/앞으로 히스토리 자동 연동
+        row.addEventListener('click', () => viewers[side].goToDest(it.dest));
+      } else {
+        // dest 없이 url(외부 링크)/action만 있는 항목도 흔하다 — 보안상 열지 않고 표시만.
+        row.classList.add('disabled');
+        if (it.url) row.title = '외부 링크: ' + it.url;
+      }
+      frag.appendChild(row);
+      if (it.items?.length) {
+        const kids = document.createElement('div');
+        kids.className = 'toc-kids';
+        kids.appendChild(renderOutlineItems(it.items, side));
+        frag.appendChild(kids);
+        tog.textContent = '▾';
+        tog.addEventListener('click', (e) => {
+          e.stopPropagation(); // 행 클릭(페이지 이동)과 분리
+          tog.textContent = kids.classList.toggle('collapsed') ? '▸' : '▾';
+        });
+      }
+    }
+    return frag;
+  }
+
+  function setOutline(on) {
+    outlineOpen = !!on;
+    for (const side of SIDES) {
+      const show = outlineOpen && loaded[side];
+      panes[side].classList.toggle('outline-open', show);
+      if (show) refreshOutline(side);
+    }
+    if (fitWidth) applyFit(); // 드로어가 pane 폭을 바꾼다 → page-width 재계산
+    emit();
   }
   // 프로젝트 저장/복원용 — side 기준으로 주고받는다(경로 해석 결과가 달라도 안전).
   function getMarkers() {
@@ -345,6 +510,11 @@ export function createDualView(hostEl) {
     removeMarker,
     getMarkers,
     setMarkers,
+    setPair,
+    jumpMirror,
+    setOutline,
+    isOutline: () => outlineOpen,
+    getFullText: (side) => viewers[side].getFullText(),
     setBusy: (side, state) => busy[side](state),
     onState: (cb) => stateCbs.push(cb),
     isSync: () => syncEnabled,

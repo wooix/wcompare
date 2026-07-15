@@ -40,6 +40,7 @@ app.whenReady().then(() => {
   handleScheme();
   registerIpc();
   project.setOnChange(applyMenu); // 최근 목록이 바뀌면 메뉴를 다시 세팅
+  require('./recentFiles').setOnChange(applyMenu);
   applyMenu();
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

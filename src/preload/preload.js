@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('wcompare', {
   writeFile: (payload) => ipcRenderer.invoke('file:write', payload),
   lint: (payload) => ipcRenderer.invoke('lint:run', payload),
   pdfContextMenu: (flags) => ipcRenderer.invoke('ui:pdf-context-menu', flags),
+  copyText: (text) => ipcRenderer.invoke('clipboard:writeText', text),
   translatePdf: (payload) => ipcRenderer.invoke('pdf:translate', payload),
   cancelTranslate: () => ipcRenderer.invoke('pdf:translate:cancel'),
   onTranslateProgress: (cb) => ipcRenderer.on('pdf:translate:progress', (_e, d) => cb(d)),
@@ -21,6 +22,8 @@ contextBridge.exposeInMainWorld('wcompare', {
     recents: () => ipcRenderer.invoke('project:recents'),
   },
   onProjectLoad: (cb) => ipcRenderer.on('project:load', (_e, p) => cb(p)),
+  // 최근 파일: 메뉴 클릭 시 main이 allowlist에 등록한 경로를 보낸다
+  onOpenRecentFile: (cb) => ipcRenderer.on('menu:open-recent-file', (_e, p) => cb(p)),
   // 이벤트: 콜백 래핑 — IpcRendererEvent를 렌더러로 넘기지 않는다
   onOpenPair: (cb) => ipcRenderer.on('open-pair', (_e, data) => cb(data)),
   onMenu: (cb) => {
@@ -28,6 +31,7 @@ contextBridge.exposeInMainWorld('wcompare', {
       'menu:open-left', 'menu:open-right', 'menu:save',
       'menu:project-save', 'menu:project-save-as',
       'menu:next-diff', 'menu:prev-diff', 'menu:toggle-ws', 'menu:toggle-vim', 'menu:toggle-theme',
+      'menu:toggle-night',
     ];
     channels.forEach((ch) => ipcRenderer.on(ch, () => cb(ch)));
   },

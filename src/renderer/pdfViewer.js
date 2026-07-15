@@ -84,6 +84,24 @@ export function createPdfViewer(hostEl) {
   }
   function findClose() { eventBus.dispatch('findbarclose', { source: null }); }
 
+  // 문서 전체 텍스트. 렌더 여부와 무관하게 getTextContent로 뽑는다
+  // — 화면 밖 페이지의 textLayer는 pdf.js가 버퍼(기본 10) 밖에서 파괴하므로 DOM에 기댈 수 없다.
+  async function getFullText() {
+    if (!doc) return '';
+    const pages = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const tc = await page.getTextContent();
+      let out = '';
+      for (const item of tc.items) {
+        out += item.str;
+        if (item.hasEOL) out += '\n';
+      }
+      pages.push(out);
+    }
+    return pages.join('\n\n');
+  }
+
   return {
     el: container,
     load,
@@ -110,5 +128,9 @@ export function createPdfViewer(hostEl) {
     findClose,
     onFind: (cb) => findCbs.push(cb),
     onLinkNav: (cb) => navCbs.push(cb),
+    getFullText,
+    // 목차. goToDestination은 위의 몽키패치를 지나므로 링크 히스토리(뒤로/앞으로)가 그대로 작동한다.
+    getOutline: () => (doc ? doc.getOutline() : Promise.resolve(null)),
+    goToDest: (dest) => { if (dest) linkService.goToDestination(dest); },
   };
 }

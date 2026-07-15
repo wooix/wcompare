@@ -10,7 +10,7 @@
 // 그래서 pagerendered 마다 멱등하게 재부착한다.
 
 let seq = 0;
-const newId = () => `mk${Date.now().toString(36)}${(seq++).toString(36)}`;
+export const newId = () => `mk${Date.now().toString(36)}${(seq++).toString(36)}`;
 
 // getClientRects()는 한 줄마다 거의 같은 사각형을 여러 개 돌려준다(세로로 크게 겹침).
 // 그대로 그리면 형광펜은 multiply가 곱해져 진해지고 밑줄은 겹쳐서 굵어진다.
@@ -71,6 +71,8 @@ export function createMarkerLayer(viewer, store) {
         const el = document.createElement('div');
         el.className = `wc-mark wc-mark-${m.kind}`;
         el.dataset.id = m.id;
+        if (m.origin === 'mirror') el.dataset.origin = 'mirror'; // 자동 미러는 점선으로 구분
+
         el.style.left = `${r.x * 100}%`;
         el.style.top = `${r.y * 100}%`;
         el.style.width = `${r.w * 100}%`;
@@ -143,13 +145,13 @@ export function createMarkerLayer(viewer, store) {
     return byPage;
   }
 
-  function add(byPage, kind) {
+  function add(byPage, kind, color) {
     if (!docKey || !byPage) return [];
     let arr = store.get(docKey);
     if (!arr) { arr = []; store.set(docKey, arr); }
     const made = [];
     for (const [page, rects] of byPage) {
-      const m = { id: newId(), page, kind, color: COLORS[kind], rects };
+      const m = { id: newId(), page, kind, color: color || COLORS[kind], rects };
       arr.push(m);
       made.push(m);
       renderPage(page);
@@ -188,8 +190,10 @@ export function createMarkerLayer(viewer, store) {
     captureSelection,
     add,
     markerAt,
+    locate, // 화면 좌표 → {page, x, y} — 미러 점프가 재사용
     remove,
     renderAll,
+    renderPage, // 미러 마커를 store에 직접 넣은 뒤 해당 페이지만 다시 그릴 때
     markers: () => list(),
   };
 }

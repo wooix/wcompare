@@ -1,5 +1,5 @@
 // src/main/ipc.js
-const { ipcMain, dialog, BrowserWindow, Menu } = require('electron');
+const { ipcMain, dialog, BrowserWindow, Menu, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { readFile, writeFile, readBytes } = require('./fileService.js');
@@ -7,6 +7,15 @@ const { lint } = require('./lint/lintService.js');
 const { translate, outputPathFor } = require('./transpaper.js');
 const { allowed, openedPdfs, normalize, allowPath } = require('./allowlist.js');
 const project = require('./project.js');
+const recentFiles = require('./recentFiles.js');
+
+// 형광펜 팔레트. 렌더러 pdfMarkers의 기본 노랑과 같은 투명도(0.45) 계열.
+const HIGHLIGHT_COLORS = [
+  { label: '노랑', color: 'rgba(255, 214, 74, 0.45)' },
+  { label: '초록', color: 'rgba(122, 224, 122, 0.45)' },
+  { label: '파랑', color: 'rgba(96, 180, 255, 0.45)' },
+  { label: '분홍', color: 'rgba(255, 128, 192, 0.45)' },
+];
 
 let job = null; // 동시에 하나의 번역만 허용
 
@@ -20,7 +29,9 @@ function registerIpc() {
     const win = BrowserWindow.getFocusedWindow();
     const res = await dialog.showOpenDialog(win, { properties: ['openFile'] });
     if (res.canceled || !res.filePaths[0]) return null;
-    return readWithPath(allowPath(res.filePaths[0]));
+    const p = allowPath(res.filePaths[0]);
+    recentFiles.record(p);
+    return readWithPath(p);
   });
 
   // ===== 프로젝트 =====
@@ -34,6 +45,7 @@ function registerIpc() {
 
   ipcMain.handle('file:read', (_e, rawPath) => {
     const p = allowPath(rawPath); // 사용자가 명시 선택(dialog/CLI/DnD/프로젝트)한 경로만 렌더러가 보냄
+    recentFiles.record(p); // pane에 파일을 올리는 모든 경로가 여기를 지난다
     return readWithPath(p);
   });
 
@@ -46,8 +58,18 @@ function registerIpc() {
 
   ipcMain.handle('file:readBytes', (_e, rawPath) => {
     const p = allowPath(rawPath);
+    recentFiles.record(p);
     const { bytes, byteSize } = readBytes(p);
     return { path: p, ext: path.basename(p), bytes, byteSize };
+  });
+
+  // 전체 텍스트 복사 등 "DOM 선택이 아닌" 텍스트의 클립보드 기록.
+  // (선택 복사는 반드시 role:'copy' — 아래 컨텍스트 메뉴 주석 참고.)
+  ipcMain.handle('clipboard:writeText', (_e, text) => {
+    const t = String(text ?? '');
+    if (t.length > 20 * 1024 * 1024) throw new Error('텍스트가 너무 커서 복사할 수 없습니다');
+    clipboard.writeText(t);
+    return { ok: true, length: t.length };
   });
 
   ipcMain.handle('lint:run', (_e, payload) => lint(payload));
@@ -84,7 +106,7 @@ function registerIpc() {
   // 메뉴 구성은 메인이 한다(렌더러가 임의 메뉴를 띄우지 못하게).
   // 복사는 반드시 role:'copy' — clipboard.writeText로 직접 쓰면 pdf.js textLayer의
   // copy 핸들러(유니코드 정규화)를 건너뛰어 깨진 텍스트가 들어간다.
-  ipcMain.handle('ui:pdf-context-menu', (e, { hasSelection, hasMarker } = {}) => {
+  ipcMain.handle('ui:pdf-context-menu', (e, { hasSelection, hasMarker, hasDoc, canMirror } = {}) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win) return null;
 
@@ -95,12 +117,23 @@ function registerIpc() {
     if (hasSelection) {
       tpl.push({ role: 'copy', label: '복사', enabled: true });
       tpl.push({ type: 'separator' });
-      tpl.push({ label: '형광펜', click: () => pick('highlight') });
+      tpl.push({
+        label: '형광펜',
+        submenu: HIGHLIGHT_COLORS.map((c) => ({ label: c.label, click: () => pick(`highlight:${c.color}`) })),
+      });
       tpl.push({ label: '밑줄', click: () => pick('underline') });
     }
     if (hasMarker) {
       if (tpl.length) tpl.push({ type: 'separator' });
       tpl.push({ label: '마커 삭제', click: () => pick('remove') });
+    }
+    if (canMirror) {
+      if (tpl.length) tpl.push({ type: 'separator' });
+      tpl.push({ label: '반대편 같은 위치 보기', click: () => pick('mirror-jump') });
+    }
+    if (hasDoc) {
+      if (tpl.length) tpl.push({ type: 'separator' });
+      tpl.push({ label: '전체 텍스트 복사', click: () => pick('copy-all') });
     }
     if (!tpl.length) return null;
 

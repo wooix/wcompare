@@ -3,7 +3,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const FORMAT = 'wcompare-project';
-const VERSION = 1;
+const VERSION = 2; // v2: 마커에 group(미러 쌍 묶음)·origin('mirror') 필드 추가. v1은 그대로 열린다.
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_MARKERS = 5000;
 const MAX_RECTS = 500;
@@ -27,6 +27,9 @@ function sanitizeMarkers(raw) {
       page,
       kind: m.kind,
       color: typeof m.color === 'string' ? m.color.slice(0, 32) : '#ffd64a',
+      // 미러 쌍 메타데이터(v2). 없으면 필드 자체를 만들지 않는다 — v1 파일과 왕복이 동일하게.
+      ...(typeof m.group === 'string' && m.group ? { group: m.group.slice(0, 64) } : {}),
+      ...(m.origin === 'mirror' ? { origin: 'mirror' } : {}),
       rects,
     }];
   });

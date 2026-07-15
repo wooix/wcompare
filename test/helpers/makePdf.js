@@ -1,7 +1,8 @@
 // 유효한 멀티페이지 PDF 바이트를 생성한다(xref 오프셋 정확 계산). 외부 의존 없음.
 // linkTo(1-based)를 주면 1쪽에 "Jump" 텍스트와 그 쪽으로 가는 내부 링크(Link annotation)를 넣는다.
 // lines>0 이면 각 페이지에 여러 줄 본문을 넣어 여러 줄 선택(마커)을 재현할 수 있게 한다.
-function makePdf(pageCount = 3, { width = 300, height = 900, linkTo = 0, lines = 0 } = {}) {
+// outline=true 면 페이지마다 "Section N" 목차 항목(/Outlines)을 넣는다 — TOC 패널 테스트용.
+function makePdf(pageCount = 3, { width = 300, height = 900, linkTo = 0, lines = 0, outline = false } = {}) {
   const offsets = {};
   let pdf = '%PDF-1.4\n';
   const addObj = (num, body) => {
@@ -22,8 +23,10 @@ function makePdf(pageCount = 3, { width = 300, height = 900, linkTo = 0, lines =
     pages.push({ pageNum, contentNum, stream });
   }
   const annotNum = linkTo ? objNum++ : 0;
+  const outlinesNum = outline ? objNum++ : 0;
+  const itemNums = outline ? pages.map(() => objNum++) : [];
 
-  addObj(1, `<< /Type /Catalog /Pages 2 0 R >>`);
+  addObj(1, `<< /Type /Catalog /Pages 2 0 R${outlinesNum ? ` /Outlines ${outlinesNum} 0 R` : ''} >>`);
   addObj(2, `<< /Type /Pages /Kids [${pages.map((p) => `${p.pageNum} 0 R`).join(' ')}] /Count ${pageCount} >>`);
   addObj(3, `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>`);
   pages.forEach((p, i) => {
@@ -34,6 +37,14 @@ function makePdf(pageCount = 3, { width = 300, height = 900, linkTo = 0, lines =
   if (annotNum) {
     const dest = pages[Math.min(linkTo, pageCount) - 1].pageNum;
     addObj(annotNum, `<< /Type /Annot /Subtype /Link /Rect [24 ${height - 128} 140 ${height - 96}] /Border [0 0 0] /Dest [${dest} 0 R /XYZ 0 ${height} null] >>`);
+  }
+  if (outlinesNum) {
+    addObj(outlinesNum, `<< /Type /Outlines /First ${itemNums[0]} 0 R /Last ${itemNums[itemNums.length - 1]} 0 R /Count ${itemNums.length} >>`);
+    itemNums.forEach((n, i) => {
+      const prev = i > 0 ? ` /Prev ${itemNums[i - 1]} 0 R` : '';
+      const next = i < itemNums.length - 1 ? ` /Next ${itemNums[i + 1]} 0 R` : '';
+      addObj(n, `<< /Title (Section ${i + 1}) /Parent ${outlinesNum} 0 R${prev}${next} /Dest [${pages[i].pageNum} 0 R /XYZ 0 ${height} null] >>`);
+    });
   }
 
   const maxObj = objNum - 1;

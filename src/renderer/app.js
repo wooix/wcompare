@@ -75,6 +75,7 @@ function renderPdfStatus(st) {
   $('pdf-page').value = String(st.left.page || st.right.page || 1);
   $('btn-sync').textContent = 'Sync: ' + (st.sync ? 'ON' : 'OFF');
   $('btn-fit').textContent = 'Fit: ' + (st.fit ? 'ON' : 'OFF');
+  $('btn-toc').textContent = 'TOC' + (st.outline ? ' ✓' : '');
   $('pdf-status').textContent = `L ${st.left.page}/${st.left.count}   R ${st.right.page}/${st.right.count}   ${Math.round(st.scale * 100)}%`;
   $('btn-back').disabled = !st.canBack;
   $('btn-forward').disabled = !st.canForward;
@@ -194,7 +195,10 @@ async function translatePdf() {
       const again = confirm('이미 번역본이 있습니다.\n\n[확인] 다시 번역하기\n[취소] 기존 번역본 열기');
       if (again) { translateDone = 0; showTranslateProgress(); res = await window.wcompare.translatePdf({ path: src, force: true }); }
     }
-    await openPdf(translateTarget, res.output);
+    const target = translateTarget;
+    await openPdf(target, res.output);
+    // 원문↔번역본 문서쌍 등록 — 마커 미러링·미러 점프가 이 쌍을 기준으로 동작한다.
+    dualView?.setPair(pdfPaths[side], pdfPaths[target]);
     if (res.partial) alert('일부 페이지는 번역에 실패해 원문 그대로 유지되었습니다.');
   } catch (e) {
     alert('번역 실패: ' + (e?.message || e));
@@ -249,19 +253,67 @@ $('btn-switch').onclick = () => switchSides();
 $('btn-translate').onclick = () => translatePdf();
 $('btn-back').onclick = () => dualView?.goBack();
 $('btn-forward').onclick = () => dualView?.goForward();
+$('btn-toc').onclick = () => dualView?.setOutline(!dualView.isOutline());
+
+// ===== PDF 야간 모드 =====
+// 페이지 canvas만 CSS 필터로 반전한다(index.html). Monaco 테마(btn-theme)와는 독립 —
+// 묶으면 diff/pdf 상태가 서로 꼬인다.
+let night = false;
+try { night = localStorage.getItem('wc-night') === '1'; } catch { /* 스토리지 불가 환경 */ }
+function applyNight() {
+  $('pdfview').classList.toggle('night', night);
+  $('btn-night').textContent = 'Night: ' + (night ? 'ON' : 'OFF');
+}
+function toggleNight() {
+  night = !night;
+  try { localStorage.setItem('wc-night', night ? '1' : '0'); } catch { /* 저장 실패는 무시 */ }
+  applyNight();
+}
+$('btn-night').onclick = toggleNight;
+applyNight();
+
+// ===== 전체 텍스트 복사 =====
+// DOM 선택과 무관하게 getTextContent로 뽑으므로 role:'copy' 경유가 필요 없다(main이 클립보드 기록).
+async function copyAllText(side) {
+  try {
+    const text = await dualView.getFullText(side);
+    await window.wcompare.copyText(text);
+    setStatus(`전체 텍스트 복사됨 (${text.length.toLocaleString()}자)`);
+  } catch (e) {
+    alert('텍스트 추출 실패: ' + (e?.message || e));
+  }
+}
 
 // ===== 우클릭: 복사 / 형광펜 / 밑줄 / 마커 삭제 =====
 // 선택 영역은 contextInfo()가 "지금 이 순간" 동기적으로 캡처한다.
 // 메뉴를 띄우고 응답을 기다리는 사이에 선택이 사라져도 안전하도록.
+let lastHighlightColor = null; // 팔레트에서 마지막으로 고른 색 — ⌘⇧H 단축키가 따라간다
 $('pdfview').addEventListener('contextmenu', async (e) => {
   if (mode !== 'pdf' || !dualView) return;
   const side = e.target.closest?.('.pdf-pane')?.dataset.side;
   if (!side) return;
   e.preventDefault();
-  const { hasSelection, markerId } = dualView.contextInfo(side, e.clientX, e.clientY);
-  const action = await window.wcompare.pdfContextMenu({ hasSelection, hasMarker: !!markerId });
-  if (action === 'highlight' || action === 'underline') dualView.addMarker(action);
-  else if (action === 'remove') dualView.removeMarker(side, markerId);
+  const info = dualView.contextInfo(side, e.clientX, e.clientY);
+  const action = await window.wcompare.pdfContextMenu({ ...info, hasMarker: !!info.markerId });
+  if (!action) return;
+  if (action.startsWith('highlight')) {
+    // 'highlight' 또는 'highlight:<색상>' — 메인이 팔레트에서 고른 색을 붙여 보낸다
+    const color = action.slice('highlight:'.length) || null;
+    if (color) lastHighlightColor = color;
+    dualView.addMarker('highlight', color);
+  } else if (action === 'underline') dualView.addMarker('underline');
+  else if (action === 'remove') dualView.removeMarker(side, info.markerId);
+  else if (action === 'mirror-jump') dualView.jumpMirror(side, e.clientX, e.clientY);
+  else if (action === 'copy-all') copyAllText(side);
+});
+
+// Alt+클릭 → 반대편 같은 위치로 미러 점프 (원문↔번역 대조 읽기의 기본 동선)
+$('pdfview').addEventListener('click', (e) => {
+  if (mode !== 'pdf' || !dualView || !e.altKey) return;
+  const side = e.target.closest?.('.pdf-pane')?.dataset.side;
+  if (!side) return;
+  e.preventDefault();
+  dualView.jumpMirror(side, e.clientX, e.clientY);
 });
 
 // ===== 문자열 검색 =====
@@ -290,7 +342,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') { e.preventDefault(); dualView.zoom(-1); }
   else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); findInput.focus(); findInput.select(); }
   // 마커 단축키 — 렌더러 keydown이라 네이티브 메뉴를 거치지 않는다(우클릭 메뉴와 같은 경로).
-  else if (e.shiftKey && (e.key === 'H' || e.key === 'h')) { e.preventDefault(); dualView.markSelection('highlight'); }
+  else if (e.shiftKey && (e.key === 'H' || e.key === 'h')) { e.preventDefault(); dualView.markSelection('highlight', lastHighlightColor); }
   else if (e.shiftKey && (e.key === 'U' || e.key === 'u')) { e.preventDefault(); dualView.markSelection('underline'); }
   // 검색창 안에서는 Cmd+←/→가 커서 이동이므로 가로채지 않는다.
   else if (e.target !== findInput && e.key === 'ArrowLeft') { e.preventDefault(); dualView.goBack(); }
@@ -371,8 +423,17 @@ const MENU = {
   'menu:toggle-ws': () => { ws = !ws; editorApi.updateOptions({ ignoreTrimWhitespace: ws }); },
   'menu:toggle-vim': () => toggleVim(editorApi),
   'menu:toggle-theme': () => { theme = theme === 'vs-dark' ? 'vs' : 'vs-dark'; monaco.editor.setTheme(theme); },
+  'menu:toggle-night': () => toggleNight(),
 };
 window.wcompare.onMenu((ch) => { MENU[ch]?.(); });
+
+// 최근 파일(메뉴): main이 allowlist에 등록한 경로를 보낸다. 빈 pane을 골라 연다.
+window.wcompare.onOpenRecentFile((p) => {
+  const empty = isPdf(p)
+    ? (!pdfPaths.left ? 'left' : (!pdfPaths.right ? 'right' : 'left'))
+    : (!editorApi.getState('left').path ? 'left' : (!editorApi.getState('right').path ? 'right' : 'left'));
+  openByPath(empty, p);
+});
 
 window.wcompare.onOpenPair(async ({ left, right }) => {
   if (left) await openByPath('left', left);
