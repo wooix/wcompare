@@ -1,6 +1,7 @@
 // 유효한 멀티페이지 PDF 바이트를 생성한다(xref 오프셋 정확 계산). 외부 의존 없음.
 // linkTo(1-based)를 주면 1쪽에 "Jump" 텍스트와 그 쪽으로 가는 내부 링크(Link annotation)를 넣는다.
-function makePdf(pageCount = 3, { width = 300, height = 900, linkTo = 0 } = {}) {
+// lines>0 이면 각 페이지에 여러 줄 본문을 넣어 여러 줄 선택(마커)을 재현할 수 있게 한다.
+function makePdf(pageCount = 3, { width = 300, height = 900, linkTo = 0, lines = 0 } = {}) {
   const offsets = {};
   let pdf = '%PDF-1.4\n';
   const addObj = (num, body) => {
@@ -14,6 +15,10 @@ function makePdf(pageCount = 3, { width = 300, height = 900, linkTo = 0 } = {}) 
     const pageNum = objNum++; const contentNum = objNum++;
     let stream = `BT /F1 28 Tf 24 ${height - 60} Td (Page ${i + 1}) Tj ET`;
     if (i === 0 && linkTo) stream += ` BT /F1 18 Tf 24 ${height - 120} Td (Jump) Tj ET`;
+    for (let ln = 0; ln < lines; ln++) {
+      const y = height - 120 - ln * 22; // 22pt 줄 간격 → 실제 논문처럼 촘촘하게
+      stream += ` BT /F1 14 Tf 24 ${y} Td (Line ${ln + 1} of page ${i + 1} lorem ipsum) Tj ET`;
+    }
     pages.push({ pageNum, contentNum, stream });
   }
   const annotNum = linkTo ? objNum++ : 0;

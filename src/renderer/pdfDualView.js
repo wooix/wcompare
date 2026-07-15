@@ -1,6 +1,6 @@
 // src/renderer/pdfDualView.js — 두 PDFViewer를 좌/우 배치 + 비율 스크롤/줌/페이지/토글 동기.
 import { createPdfViewer } from './pdfViewer.js';
-import { syncTargetTop } from './syncScroll.js';
+import { syncTargetTop, syncTargetLeft } from './syncScroll.js';
 import { createMarkerLayer } from './pdfMarkers.js';
 
 // 오래 걸리는 작업(번역)을 해당 pane 위에 겹쳐 보여주는 오버레이.
@@ -78,8 +78,10 @@ export function createDualView(hostEl) {
   }
 
   function align(fromSide) {
+    const from = viewers[fromSide].el;
     const to = viewers[other(fromSide)].el;
-    to.scrollTop = syncTargetTop(viewers[fromSide].el, to);
+    to.scrollTop = syncTargetTop(from, to);
+    to.scrollLeft = syncTargetLeft(from, to); // 확대 시 생긴 가로 스크롤도 함께 맞춘다
   }
 
   function realign() {

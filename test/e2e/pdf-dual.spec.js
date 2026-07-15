@@ -162,6 +162,26 @@ test('Fit ON이면 창 크기를 바꿔도 너비에 계속 맞춘다 (OFF면 �
   fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
 });
 
+test('Sync ON: 확대로 생긴 가로 스크롤도 반대편이 따라온다', async () => {
+  const { a, b } = writePair('hsync' + Date.now());
+  const app = await electron.launch({ args: [MAIN, a, b] });
+  const win = await app.firstWindow();
+  await win.waitForSelector(`${rightC} canvas`, { timeout: 20000 });
+
+  for (let i = 0; i < 4; i++) await win.click('#btn-zoom-in'); // 가로가 넘치게
+  // 중앙확대로 양쪽이 이미 같은 가로 위치에 있으므로, 왼쪽을 다른 값으로 옮긴 뒤
+  // 오른쪽이 "따라와 수렴"하는지를 기다린다(align은 rAF 뒤에 일어나 한 프레임 지연).
+  await win.evaluate((s) => { document.querySelector(s).scrollLeft = 300; }, leftC);
+  await win.waitForFunction((sels) => {
+    const l = document.querySelector(sels[0]).scrollLeft;
+    const r = document.querySelector(sels[1]).scrollLeft;
+    return l > 200 && Math.abs(l - r) < 5; // 왼쪽이 옮겨졌고 오른쪽이 따라왔다
+  }, [leftC, rightC], { timeout: 5000 });
+
+  await app.close();
+  fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
+});
+
 test('확대: 가로가 넘칠 때 왼쪽이 아니라 중앙을 기준으로 커진다', async () => {
   const { a, b } = writePair('zc' + Date.now());
   const app = await electron.launch({ args: [MAIN, a, b] });

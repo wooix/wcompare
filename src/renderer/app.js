@@ -120,15 +120,36 @@ let translating = false;
 let translateTarget = null; // 진행 상황을 띄울 빈 pane
 let translateDone = 0;
 let translateTotal = 0;
+let translateStart = 0;
+let translateTimer = 0;
 const loadedPdfSides = () => ['left', 'right'].filter((s) => pdfPaths[s]);
+
+function fmtDuration(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return '--:--';
+  const s = Math.round(sec);
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// 경과 시간 + 남은 시간 추정. 1페이지 = agy 1회로 페이지당 시간이 균일해 done 기준 선형 추정이 잘 맞는다.
+// done=0이면 아직 페이지당 시간을 몰라 남은 시간은 표기하지 않는다.
+function progressTimes(done, total, elapsedSec) {
+  const elapsed = fmtDuration(elapsedSec);
+  if (!done || !total) return { elapsed, eta: null };
+  const perPage = elapsedSec / done;
+  return { elapsed, eta: fmtDuration(perPage * (total - done)) };
+}
 
 // 진행 상황은 번역본이 들어올 "빈 창"에 오버레이로 보여준다.
 function showTranslateProgress(sub) {
   if (!translateTarget) return;
+  const elapsedSec = translateStart ? (Date.now() - translateStart) / 1000 : 0;
+  const { elapsed, eta } = progressTimes(translateDone, translateTotal, elapsedSec);
+  const pages = translateTotal ? `${translateDone} / ${translateTotal} 페이지` : `${translateDone} 페이지`;
   dualView?.setBusy(translateTarget, {
     title: '한국어 번역 중…',
-    sub: sub ?? (translateTotal ? `${translateDone} / ${translateTotal} 페이지` : `${translateDone} 페이지`),
-    hint: '툴바의 “번역 취소”를 누르면 중단됩니다',
+    sub: sub ?? pages,
+    hint: eta ? `경과 ${elapsed} · 남은 시간 약 ${eta}` : `경과 ${elapsed} · 남은 시간 계산 중…`,
     ratio: translateTotal ? translateDone / translateTotal : undefined,
   });
 }
@@ -160,10 +181,13 @@ async function translatePdf() {
   translateTarget = side === 'left' ? 'right' : 'left';
   translateDone = 0;
   translateTotal = pdfState?.[side]?.count || 0;
+  translateStart = Date.now();
   updatePdfBtns();
   // 분모(전체 페이지 수)는 이미 알고 있으므로 처음부터 "0 / N 페이지"로 보여준다.
   // 1페이지 = agy 1회 호출 = 진행 1틱. 첫 틱은 1쪽 번역이 끝나야 오므로 그동안은 0/N.
   showTranslateProgress();
+  clearInterval(translateTimer);
+  translateTimer = setInterval(() => { if (translating) showTranslateProgress(); }, 1000); // 경과 시간을 매초 갱신
   try {
     let res = await window.wcompare.translatePdf({ path: src });
     if (res.existed) {
@@ -175,9 +199,11 @@ async function translatePdf() {
   } catch (e) {
     alert('번역 실패: ' + (e?.message || e));
   } finally {
+    clearInterval(translateTimer);
     dualView?.setBusy(translateTarget, null);
     translating = false;
     translateTarget = null;
+    translateStart = 0;
     updatePdfBtns();
   }
 }

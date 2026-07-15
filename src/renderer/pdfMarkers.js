@@ -12,6 +12,27 @@
 let seq = 0;
 const newId = () => `mk${Date.now().toString(36)}${(seq++).toString(36)}`;
 
+// getClientRects()는 한 줄마다 거의 같은 사각형을 여러 개 돌려준다(세로로 크게 겹침).
+// 그대로 그리면 형광펜은 multiply가 곱해져 진해지고 밑줄은 겹쳐서 굵어진다.
+// 세로로 절반 이상 겹치는 사각형들을 "같은 줄"로 묶어 줄당 하나로 합친다.
+export function coalesceRects(rects) {
+  const rows = [];
+  for (const r of [...rects].sort((a, b) => a.y - b.y)) {
+    const row = rows[rows.length - 1];
+    const overlap = row ? Math.min(row.y + row.h, r.y + r.h) - Math.max(row.y, r.y) : 0;
+    if (row && overlap >= Math.min(row.h, r.h) * 0.5) {
+      const x = Math.min(row.x, r.x);
+      const y = Math.min(row.y, r.y);
+      row.w = Math.max(row.x + row.w, r.x + r.w) - x;
+      row.h = Math.max(row.y + row.h, r.y + r.h) - y;
+      row.x = x; row.y = y;
+    } else {
+      rows.push({ ...r });
+    }
+  }
+  return rows;
+}
+
 export const COLORS = {
   highlight: 'rgba(255, 214, 74, 0.45)',
   underline: '#ff5c5c',
@@ -117,7 +138,9 @@ export function createMarkerLayer(viewer, store) {
         });
       }
     }
-    return byPage.size ? byPage : null;
+    if (!byPage.size) return null;
+    for (const [page, rects] of byPage) byPage.set(page, coalesceRects(rects));
+    return byPage;
   }
 
   function add(byPage, kind) {

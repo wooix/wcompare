@@ -54,6 +54,41 @@ test('드래그 선택 후 형광펜/밑줄 마커가 생긴다', async () => {
   fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
 });
 
+test('여러 줄 선택: 줄당 사각형 하나로 합쳐 겹치지 않는다', async () => {
+  // getClientRects()는 한 줄마다 거의 같은 사각형을 2개씩 준다 → 그대로 그리면
+  // 형광펜이 진해지고 밑줄이 굵어진다. 저장 전에 줄당 하나로 합쳐야 한다.
+  const a = path.join(os.tmpdir(), `wc-mk-ml-${Date.now()}.pdf`);
+  fs.writeFileSync(a, makePdf(1, { height: 900, lines: 6 })); // 여러 줄 본문
+  const app = await electron.launch({ args: [MAIN, a] });
+  const win = await app.firstWindow();
+  await win.waitForSelector(`${L} .textLayer span`, { timeout: 20000 });
+
+  // 페이지의 모든 줄을 한 번에 선택
+  await win.evaluate((sel) => {
+    const spans = [...document.querySelectorAll(`${sel} .textLayer span`)];
+    const range = document.createRange();
+    range.setStartBefore(spans[0]);
+    range.setEndAfter(spans[spans.length - 1]);
+    const s = window.getSelection();
+    s.removeAllRanges();
+    s.addRange(range);
+  }, L);
+  await mark(win, 'highlight');
+
+  const geo = await win.evaluate((sel) => {
+    const rc = [...document.querySelectorAll(`${sel} .wc-mark`)]
+      .map((e) => e.getBoundingClientRect()).sort((x, y) => x.top - y.top);
+    let overlaps = 0;
+    for (let i = 1; i < rc.length; i++) if (rc[i].top < rc[i - 1].bottom - 1) overlaps++;
+    return { count: rc.length, overlaps };
+  }, L);
+  expect(geo.count).toBeGreaterThanOrEqual(6); // 줄 수만큼 (2배가 아니라)
+  expect(geo.overlaps).toBe(0);                // 세로로 겹치는 사각형이 없다
+
+  await app.close();
+  fs.rmSync(a, { force: true });
+});
+
 test('마커는 페이지 안의 상대 위치로 저장된다 (줌해도 비율 유지)', async () => {
   const { a, b } = writePair('geo' + Date.now());
   const app = await electron.launch({ args: [MAIN, a, b] });
