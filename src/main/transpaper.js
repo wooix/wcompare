@@ -82,15 +82,19 @@ function onLines(stream, cb) {
 
 /**
  * transpaper를 띄우고 진행 상황을 스트리밍한다.
+ * @param {string} input 원본 PDF 절대경로
+ * @param {object} [opts]
+ * @param {(d:{done:number})=>void} [opts.onProgress] 페이지마다 호출
+ * @param {string} [opts.output] 출력 경로를 직접 지정(없으면 outputPathFor로 유도). main이 유도한 값만 넘긴다.
  * @returns {{ promise: Promise<{output,partial,pages}>, cancel: () => void, output: string }}
  */
-function translate(input, { onProgress, env = process.env } = {}) {
+function translate(input, { onProgress, output, env = process.env } = {}) {
   const bin = resolveBin(env);
   if (!bin) return { promise: Promise.reject(new Error(NOT_FOUND_HINT)), cancel() {}, output: null };
 
-  const output = outputPathFor(input);
+  const outPath = output || outputPathFor(input);
   // detached: 자신만의 프로세스 그룹을 갖게 해, 취소 시 transpaper가 띄운 agy/claude까지 함께 정리한다.
-  const child = spawn(bin, [input, '-o', output, '-v'], {
+  const child = spawn(bin, [input, '-o', outPath, '-v'], {
     env: envWithPath(env), detached: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -106,7 +110,7 @@ function translate(input, { onProgress, env = process.env } = {}) {
     child.on('close', (code) => {
       if (canceled) return reject(new Error('번역이 취소되었습니다.'));
       // 0=성공, 2=일부 페이지는 번역 실패해 원문 유지, 그 외=오류
-      if (code === 0 || code === 2) return resolve({ output, partial: code === 2, pages });
+      if (code === 0 || code === 2) return resolve({ output: outPath, partial: code === 2, pages });
       reject(new Error(`transpaper 오류 (exit ${code})\n${errTail.join('\n').slice(-600)}`));
     });
   });
@@ -117,7 +121,7 @@ function translate(input, { onProgress, env = process.env } = {}) {
     try { process.kill(-child.pid, 'SIGTERM'); } catch { /* 이미 종료됨 */ }
   }
 
-  return { promise, cancel, output };
+  return { promise, cancel, output: outPath };
 }
 
 module.exports = { translate, resolveBin, outputPathFor, isProgressLine, pathDirs, envWithPath, NOT_FOUND_HINT };

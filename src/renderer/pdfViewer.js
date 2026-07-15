@@ -64,7 +64,8 @@ export function createPdfViewer(hostEl) {
   async function load(bytes) {
     const next = await getDocument({ data: bytes, ...DOC_OPTS }).promise;
     const prev = await setDoc(next);
-    prev?.destroy(); // 재로드 시 이전 문서의 워커·메모리 해제
+    // 재로드 시 이전 문서의 워커·메모리 해제. pdf.js v6 프록시엔 destroy가 없어 loadingTask로 정리한다.
+    prev?.loadingTask?.destroy();
     viewer.currentScaleValue = 'page-width';
   }
 

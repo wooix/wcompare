@@ -55,6 +55,11 @@ export function createDualView(hostEl) {
     const viewerHost = document.createElement('div');
     viewerHost.className = 'pdf-viewer-host';
     pane.appendChild(viewerHost);
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'pdf-close';
+    closeBtn.title = '이 문서 닫기';
+    closeBtn.textContent = '✕';
+    pane.appendChild(closeBtn);
     viewers[side] = createPdfViewer(viewerHost);
     marks[side] = createMarkerLayer(viewers[side], markerStore);
     busy[side] = createBusy(pane); // 뷰어 뒤에 붙여 위에 겹치게
@@ -203,6 +208,7 @@ export function createDualView(hostEl) {
   async function openSide(side, { bytes, path }) {
     await viewers[side].load(bytes);
     loaded[side] = true;
+    panes[side].classList.add('loaded'); // ✕ 닫기 버튼은 문서가 로드된 pane에만 보인다
     marks[side].setDoc(path || null); // 재렌더가 이전 문서 마커를 그리지 않도록 동기 갱신
     // fit이 꺼져 있으면 반대편이 쓰던 배율에 맞춘다 (자기 배율을 읽으면 방금 적용된 page-width가 나온다).
     if (fitWidth) applyFit();
@@ -264,6 +270,22 @@ export function createDualView(hostEl) {
     emit();
   }
 
+  // 한쪽 문서를 닫는다. switch와 달리 더는 참조가 없으므로 워커·메모리를 해제한다.
+  // pdf.js v6의 PDFDocumentProxy에는 destroy가 없다 → loadingTask.destroy()로 워커까지 정리한다.
+  async function closeSide(side) {
+    if (!loaded[side]) return;
+    const prev = await viewers[side].setDoc(null);
+    prev?.loadingTask?.destroy();
+    loaded[side] = false;
+    marks[side].setDoc(null);
+    panes[side].classList.remove('loaded');
+    panes[side].classList.remove('outline-open');
+    hist.back.length = 0; // 히스토리 위치는 문서 기준이라 무효 (switch와 동일)
+    hist.fwd.length = 0;
+    refind();
+    emit();
+  }
+
   // 좌우 교체 — 파싱된 문서 객체만 맞바꾼다(재파싱 없음). 한쪽만 열려 있으면 반대편으로 옮긴다.
   async function switchSides() {
     const pages = { left: viewers.left.currentPage(), right: viewers.right.currentPage() };
@@ -275,6 +297,7 @@ export function createDualView(hostEl) {
     await viewers.right.setDoc(docs.left);
     loaded.left = !!docs.right;
     loaded.right = !!docs.left;
+    for (const s of SIDES) panes[s].classList.toggle('loaded', loaded[s]); // ✕ 버튼도 문서를 따라간다
     marks.left.setDoc(keys.right); // 마커도 문서를 따라 반대편으로
     marks.right.setDoc(keys.left);
 
@@ -453,6 +476,7 @@ export function createDualView(hostEl) {
 
   return {
     openSide,
+    closeSide,
     setSync,
     setFit,
     zoom,

@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { resolveBin, outputPathFor, isProgressLine, pathDirs } = require('../src/main/transpaper.js');
+const { resolveBin, outputPathFor, isProgressLine, pathDirs, translate } = require('../src/main/transpaper.js');
 
 function tmpExec(name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-tp-'));
@@ -60,6 +60,15 @@ test('resolveBin: PATH에서 탐색', () => {
 test('resolveBin: 어디에도 없으면 null', () => {
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-empty-'));
   assert.equal(resolveBin({ PATH: empty }, empty, []), null);
+});
+
+test('translate: output 오버라이드가 주어지면 outputPathFor 대신 그 경로를 쓴다', async () => {
+  const { p: bin } = tmpExec('transpaper'); // #!/bin/sh — 즉시 exit 0
+  const custom = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-tp-out-')), 'custom.ko.pdf');
+  const job = translate('/some/input.pdf', { output: custom, env: { WCOMPARE_TRANSPAPER: bin, PATH: '' } });
+  assert.equal(job.output, custom, '반환 객체의 output이 지정 경로여야 한다');
+  const res = await job.promise;
+  assert.equal(res.output, custom, 'promise 결과의 output도 지정 경로여야 한다');
 });
 
 test('resolveBin: 형제 저장소의 venv를 개발 편의로 탐색', () => {

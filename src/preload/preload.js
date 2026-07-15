@@ -17,9 +17,16 @@ contextBridge.exposeInMainWorld('wcompare', {
   project: {
     open: () => ipcRenderer.invoke('project:open'),
     openRecent: (id) => ipcRenderer.invoke('project:open-recent', id),
-    save: (snapshot) => ipcRenderer.invoke('project:save', snapshot),
-    saveAs: (snapshot) => ipcRenderer.invoke('project:save-as', snapshot),
+    // name(문자열)은 이름 모달에서 받은 프로젝트 이름 — 없으면 needName 신호로 되돌아온다.
+    save: (snapshot, name) => ipcRenderer.invoke('project:save', snapshot, name),
+    saveAs: (snapshot, name) => ipcRenderer.invoke('project:save-as', snapshot, name),
     recents: () => ipcRenderer.invoke('project:recents'),
+  },
+  // 설정: 렌더러는 boolean 두 개만 바꿀 수 있고 보관 폴더는 pickStorageDir(=main dialog)로만 바꾼다.
+  settings: {
+    get: () => ipcRenderer.invoke('settings:get'),
+    set: (patch) => ipcRenderer.invoke('settings:set', patch),
+    pickStorageDir: () => ipcRenderer.invoke('settings:pick-storage-dir'),
   },
   onProjectLoad: (cb) => ipcRenderer.on('project:load', (_e, p) => cb(p)),
   // 최근 파일: 메뉴 클릭 시 main이 allowlist에 등록한 경로를 보낸다
@@ -28,10 +35,10 @@ contextBridge.exposeInMainWorld('wcompare', {
   onOpenPair: (cb) => ipcRenderer.on('open-pair', (_e, data) => cb(data)),
   onMenu: (cb) => {
     const channels = [
-      'menu:open-left', 'menu:open-right', 'menu:save',
+      'menu:open-left', 'menu:open-right', 'menu:close-left', 'menu:close-right', 'menu:save',
       'menu:project-save', 'menu:project-save-as',
       'menu:next-diff', 'menu:prev-diff', 'menu:toggle-ws', 'menu:toggle-vim', 'menu:toggle-theme',
-      'menu:toggle-night',
+      'menu:toggle-night', 'menu:settings',
     ];
     channels.forEach((ch) => ipcRenderer.on(ch, () => cb(ch)));
   },

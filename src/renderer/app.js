@@ -236,6 +236,21 @@ async function openByDialog(side) {
   setMode('diff');
 }
 
+// 열린 파일 닫기 — pdf는 뷰어 문서 해제, diff는 미저장 확인 후 빈 모델로.
+async function closeFile(side) {
+  if (mode === 'pdf') {
+    if (translating) return; // 번역 중 문서 상태 변경 금지 (switch와 동일)
+    await dualView?.closeSide(side);
+    pdfPaths[side] = null;
+    updatePdfBtns();
+  } else {
+    if (!(await dirtyGuard(side))) return;
+    editorApi.close(side);
+    linters[side].cancel();
+    refreshStatus();
+  }
+}
+
 // ===== toolbar wiring (by id) =====
 $('btn-open-left').onclick = () => openByDialog('left');
 $('btn-open-right').onclick = () => openByDialog('right');
@@ -255,6 +270,15 @@ $('btn-translate').onclick = () => translatePdf();
 $('btn-back').onclick = () => dualView?.goBack();
 $('btn-forward').onclick = () => dualView?.goForward();
 $('btn-toc').onclick = () => dualView?.setOutline(!dualView.isOutline());
+
+// ===== 설정 다이얼로그 wiring (요소는 항상 존재하므로 한 번만 건다) =====
+$('set-archive-pdf').onchange = (e) => window.wcompare.settings.set({ archivePdfOnOpen: e.target.checked });
+$('set-keep-translations').onchange = (e) => window.wcompare.settings.set({ keepTranslationsInStorage: e.target.checked });
+$('set-storage-change').onclick = async () => {
+  const s = await window.wcompare.settings.pickStorageDir(); // main dialog, 취소 시 null
+  if (s) $('set-storage-path').value = s.storageDir;
+};
+$('settings-close').onclick = () => $('settings-dialog').close();
 
 // ===== PDF 야간 모드 =====
 // 페이지 canvas만 CSS 필터로 반전한다(index.html). Monaco 테마(btn-theme)와는 독립 —
@@ -306,6 +330,15 @@ $('pdfview').addEventListener('contextmenu', async (e) => {
   else if (action === 'remove') dualView.removeMarker(side, info.markerId);
   else if (action === 'mirror-jump') dualView.jumpMirror(side, e.clientX, e.clientY);
   else if (action === 'copy-all') copyAllText(side);
+});
+
+// pane 우상단 ✕ → 그 문서 닫기. altKey와 무관하므로 미러 점프 리스너와 독립으로 둔다.
+$('pdfview').addEventListener('click', (e) => {
+  const b = e.target.closest?.('.pdf-close');
+  if (!b) return;
+  e.stopPropagation();
+  const side = b.closest('.pdf-pane')?.dataset.side;
+  if (side) closeFile(side);
 });
 
 // Alt+클릭 → 반대편 같은 위치로 미러 점프 (원문↔번역 대조 읽기의 기본 동선)
@@ -384,11 +417,49 @@ async function saveProject(as = false) {
   try {
     const snap = projectSnapshot();
     if (!snap.files.left && !snap.files.right) { alert('저장할 파일이 없습니다.'); return; }
-    const res = as ? await window.wcompare.project.saveAs(snap) : await window.wcompare.project.save(snap);
+    let res = as ? await window.wcompare.project.saveAs(snap) : await window.wcompare.project.save(snap);
+    if (res?.needName) {
+      const name = await promptProjectName(res.suggest); // 취소 시 null
+      if (!name) return;
+      res = await window.wcompare.project.save(snap, name);
+    }
     if (res?.path) setStatus(`프로젝트 저장됨: ${res.path.split('/').pop()}`);
   } catch (e) {
     alert('프로젝트 저장 실패: ' + (e?.message || e));
   }
+}
+
+// 프로젝트 이름 입력 모달. 확장자 없는 이름 전체가 선택된 상태로 뜬다(요구사항: input.select()).
+// 저장 대상 경로는 main이 storageDir/projects 하위로 유도하므로, 렌더러는 "이름 문자열"만 넘긴다.
+function promptProjectName(suggest) {
+  return new Promise((resolve) => {
+    const dlg = $('project-name-dialog');
+    const input = $('project-name-input');
+    input.value = suggest || '';
+    // 이름 모달의 두 버튼은 순서상 첫 submit이 '취소'라, Enter 기본 제출이 취소가 된다 →
+    // Enter는 저장으로 명시 처리한다(Esc는 dialog가 빈 returnValue로 닫아 취소가 된다).
+    const onKey = (e) => { if (e.key === 'Enter') { e.preventDefault(); dlg.close('ok'); } };
+    const onClose = () => {
+      input.removeEventListener('keydown', onKey);
+      dlg.removeEventListener('close', onClose);
+      const name = dlg.returnValue === 'ok' ? input.value.trim() : '';
+      resolve(name || null);
+    };
+    input.addEventListener('keydown', onKey);
+    dlg.addEventListener('close', onClose);
+    dlg.showModal();
+    input.focus();
+    input.select();
+  });
+}
+
+// 설정 모달 — 현재 값으로 채우고 띄운다. 체크박스는 change 시 즉시 반영(아래 wiring 참조).
+async function openSettings() {
+  const s = await window.wcompare.settings.get();
+  $('set-storage-path').value = s.storageDir;
+  $('set-archive-pdf').checked = !!s.archivePdfOnOpen;
+  $('set-keep-translations').checked = !!s.keepTranslationsInStorage;
+  $('settings-dialog').showModal();
 }
 
 window.wcompare.onProjectLoad(async (p) => {
@@ -416,6 +487,8 @@ window.wcompare.onProjectLoad(async (p) => {
 const MENU = {
   'menu:open-left': () => openByDialog('left'),
   'menu:open-right': () => openByDialog('right'),
+  'menu:close-left': () => closeFile('left'),
+  'menu:close-right': () => closeFile('right'),
   'menu:save': () => save(),
   'menu:project-save': () => saveProject(false),
   'menu:project-save-as': () => saveProject(true),
@@ -425,6 +498,7 @@ const MENU = {
   'menu:toggle-vim': () => toggleVim(editorApi),
   'menu:toggle-theme': () => { theme = theme === 'vs-dark' ? 'vs' : 'vs-dark'; monaco.editor.setTheme(theme); },
   'menu:toggle-night': () => toggleNight(),
+  'menu:settings': () => openSettings(),
 };
 window.wcompare.onMenu((ch) => { MENU[ch]?.(); });
 

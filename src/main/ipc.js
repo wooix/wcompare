@@ -8,6 +8,7 @@ const { translate, outputPathFor } = require('./transpaper.js');
 const { allowed, openedPdfs, normalize, allowPath } = require('./allowlist.js');
 const project = require('./project.js');
 const recentFiles = require('./recentFiles.js');
+const settings = require('./settings.js');
 
 // 형광펜 팔레트. 렌더러 pdfMarkers의 기본 노랑과 같은 투명도(0.45) 계열.
 const HIGHLIGHT_COLORS = [
@@ -22,6 +23,33 @@ let job = null; // 동시에 하나의 번역만 허용
 function readWithPath(p) {
   const meta = readFile(p);
   return { path: p, ext: path.basename(p), ...meta };
+}
+
+// file이 dir 하위(또는 같음)인지. path.relative가 ..로 시작하지 않으면 하위.
+function isInside(dir, file) {
+  const rel = path.relative(dir, path.resolve(file));
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+// 설정이 켜져 있으면 연 PDF를 보관 폴더(documents)에 사본으로 남긴다 —
+// 원본이 외장 드라이브 등에서 사라져도 기록이 남게. 실패해도 열기는 계속한다(콘솔 경고만).
+function archivePdfIfEnabled(p) {
+  try {
+    const s = settings.get();
+    if (!s.archivePdfOnOpen || !/\.pdf$/i.test(p)) return;
+    const docs = settings.dirFor('documents'); // storageDir/documents 보장
+    if (isInside(normalize(s.storageDir), p)) return; // 이미 보관 폴더 안에서 연 파일
+    const base = path.basename(p).replace(/\.pdf$/i, '');
+    const srcSize = fs.statSync(p).size;
+    // 같은 이름이 있고 크기가 같으면 이미 보관된 것으로 보고 skip. 다르면 base-2.pdf, base-3.pdf … 로.
+    for (let n = 1; n < 1000; n++) {
+      const dst = path.join(docs, n === 1 ? `${base}.pdf` : `${base}-${n}.pdf`);
+      if (!fs.existsSync(dst)) { fs.copyFileSync(p, dst); return; }
+      if (fs.statSync(dst).size === srcSize) return; // 이미 동일 사본이 있다
+    }
+  } catch (e) {
+    console.warn('PDF 보관 실패(무시):', e?.message || e);
+  }
 }
 
 function registerIpc() {
@@ -39,8 +67,11 @@ function registerIpc() {
   const winOf = (e) => BrowserWindow.fromWebContents(e.sender);
   ipcMain.handle('project:open', (e) => project.open(winOf(e)));
   ipcMain.handle('project:open-recent', (e, id) => project.openRecent(winOf(e), id));
-  ipcMain.handle('project:save', (e, snapshot) => project.save(winOf(e), snapshot));
-  ipcMain.handle('project:save-as', (e, snapshot) => project.save(winOf(e), snapshot, { saveAs: true }));
+  // name은 문자열만 통과시킨다(렌더러 이름 모달 결과). 나머지 경로 결정은 main이 한다.
+  ipcMain.handle('project:save', (e, snapshot, name) =>
+    project.save(winOf(e), snapshot, { name: typeof name === 'string' ? name : undefined }));
+  ipcMain.handle('project:save-as', (e, snapshot, name) =>
+    project.save(winOf(e), snapshot, { saveAs: true, name: typeof name === 'string' ? name : undefined }));
   ipcMain.handle('project:recents', () => project.list().map(({ id, name }) => ({ id, name })));
 
   ipcMain.handle('file:read', (_e, rawPath) => {
@@ -60,7 +91,25 @@ function registerIpc() {
     const p = allowPath(rawPath);
     recentFiles.record(p);
     const { bytes, byteSize } = readBytes(p);
+    // 설정: PDF를 열 때 보관 폴더에 사본 저장 (원본이 외장 드라이브 등에서 사라져도 기록이 남게)
+    archivePdfIfEnabled(p);
     return { path: p, ext: path.basename(p), bytes, byteSize };
+  });
+
+  // ===== 설정 =====
+  ipcMain.handle('settings:get', () => settings.get());
+  // 렌더러는 boolean 두 개만 바꿀 수 있다 (storageDir는 dialog를 거쳐야 바꾼다 — 임의 경로 쓰기 방지).
+  ipcMain.handle('settings:set', (_e, patch = {}) => {
+    const next = {};
+    if (typeof patch.archivePdfOnOpen === 'boolean') next.archivePdfOnOpen = patch.archivePdfOnOpen;
+    if (typeof patch.keepTranslationsInStorage === 'boolean') next.keepTranslationsInStorage = patch.keepTranslationsInStorage;
+    return settings.set(next);
+  });
+  ipcMain.handle('settings:pick-storage-dir', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const res = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
+    if (res.canceled || !res.filePaths[0]) return null;
+    return settings.set({ storageDir: res.filePaths[0] }); // 절대경로만 통과(settingsStore가 검증)
   });
 
   // 전체 텍스트 복사 등 "DOM 선택이 아닌" 텍스트의 클립보드 기록.
@@ -79,12 +128,15 @@ function registerIpc() {
     if (!openedPdfs.has(p)) throw new Error('translate denied: 이 세션에서 연 PDF가 아닙니다');
     if (job) throw new Error('이미 번역이 진행 중입니다');
 
-    const output = outputPathFor(p);
+    const output = settings.get().keepTranslationsInStorage
+      ? path.join(settings.dirFor('translations'), path.basename(p).replace(/\.pdf$/i, '') + '.ko.pdf')
+      : outputPathFor(p);
     if (!force && fs.existsSync(output)) return { output, existed: true };
 
     const wc = e.sender;
     job = translate(p, {
       onProgress: (d) => { if (!wc.isDestroyed()) wc.send('pdf:translate:progress', d); },
+      output,
     });
     try {
       const res = await job.promise;

@@ -8,6 +8,7 @@ const path = require('node:path');
 const { serialize, parse, MAX_BYTES } = require('./projectFile.js');
 const { createRecents } = require('./recentProjects.js');
 const { allowed, allowPath, normalize } = require('./allowlist.js');
+const settings = require('./settings.js');
 
 const EXT = 'wcproj';
 let recents = null;
@@ -25,14 +26,6 @@ function sendWhenReady(win, channel, payload) {
   else wc.send(channel, payload);
 }
 
-// dialog가 준 경로는 /var/... 인데 파일 경로는 realpath로 /private/var/... 이다.
-// 둘의 표기가 다르면 path.relative가 ../../../.. 로 터무니없이 길어진다 → 기준을 맞춘다.
-function realDir(p) {
-  const dir = path.dirname(path.resolve(p));
-  try { return path.join(fs.realpathSync.native(dir), path.basename(p)); }
-  catch { return path.resolve(p); }
-}
-
 function setOnChange(fn) { onChange = fn || (() => {}); }
 function list() { return store().list().map(({ id, name, path: p }) => ({ id, name, path: p })); }
 function clearRecents() { store().clear(); onChange(); }
@@ -44,7 +37,9 @@ function loadFrom(win, projectPath) {
 
   // 프로젝트에 적힌 파일을 이 세션에서 열 수 있도록 화이트리스트에 넣는다.
   // (CLI 인자와 동일한 취급 — 사용자가 명시적으로 연 프로젝트이므로.)
-  const payload = { mode: project.mode, view: project.view, markers: project.markers, files: {}, missing: [] };
+  // projectName: 렌더러 이름 모달의 기본값 후보(현재는 사용 안 해도 무방).
+  const payload = { mode: project.mode, view: project.view, markers: project.markers, files: {}, missing: [],
+    projectName: path.basename(projectPath, `.${EXT}`) };
   for (const side of ['left', 'right']) {
     const f = project.files[side];
     if (!f) { payload.files[side] = null; continue; }
@@ -95,18 +90,26 @@ function assertOwned(snapshot) {
   }
 }
 
-async function save(win, snapshot, { saveAs = false } = {}) {
+// 저장 대상 경로는 렌더러가 정하지 않는다: 이름 문자열만 받아 main이 storageDir/projects 하위로 유도한다.
+// eslint-disable-next-line require-await -- 인터페이스 호환(렌더러는 await로 호출)
+async function save(win, snapshot, { saveAs = false, name } = {}) {
   assertOwned(snapshot);
-  let target = saveAs ? null : currentPath;
-  if (!target) {
-    const base = snapshot?.files?.left ? path.basename(snapshot.files.left, path.extname(snapshot.files.left)) : 'untitled';
-    const res = await dialog.showSaveDialog(win, {
-      defaultPath: `${base}.${EXT}`,
-      filters: [{ name: 'wcompare 프로젝트', extensions: [EXT] }],
-    });
-    if (res.canceled || !res.filePath) return null;
-    target = realDir(res.filePath); // 파일 경로와 같은 표기로 맞춰야 rel이 정상적으로 나온다
+
+  let target;
+  if (typeof name === 'string') {
+    // 렌더러 이름 모달에서 받은 프로젝트 이름. 경로 구분자·상위 이동(/, \, :)을 막는다.
+    if (!/^[^/\\:]{1,80}$/.test(name)) throw new Error('사용할 수 없는 프로젝트 이름입니다');
+    target = path.join(settings.dirFor('projects'), `${name}.${EXT}`);
+  } else if (!saveAs && currentPath) {
+    target = currentPath; // 이미 연 프로젝트에 조용히 재저장
+  } else {
+    // 처음 저장이거나 "다른 이름으로 저장" → 렌더러가 이름 모달을 띄우고 name과 함께 다시 부른다.
+    const suggest = currentPath
+      ? path.basename(currentPath, `.${EXT}`)
+      : (snapshot?.files?.left ? path.basename(snapshot.files.left, path.extname(snapshot.files.left)) : 'untitled');
+    return { needName: true, suggest };
   }
+
   fs.writeFileSync(target, serialize(snapshot, target));
   currentPath = target;
   store().add(target);

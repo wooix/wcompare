@@ -1,5 +1,7 @@
 // test/e2e/project.spec.js — 프로젝트 저장/열기 + 최근 목록.
 // dialog는 main이 띄우므로 Playwright로 클릭할 수 없다 → dialog를 스텁하고 IPC 경로를 그대로 탄다.
+// 저장은 네이티브 save dialog가 아니라 렌더러 "이름 모달"을 거친다 → 이름을 입력해 storageDir/projects/에 저장.
+// 실제 ~/.local/wcompare를 오염시키지 않도록 main settings의 storageDir를 테스트용 임시 폴더로 바꾼다.
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');
 const os = require('node:os');
@@ -18,16 +20,35 @@ function setup(tag) {
   fs.writeFileSync(b, makePdf(3, { height: 900 }));
   // 최근 목록이 테스트끼리 섞이지 않게 userData를 격리한다
   const userData = path.join(dir, 'userData');
-  return { dir, a, b, proj: path.join(dir, 'p.wcproj'), userData };
+  // 보관 폴더도 격리한다 → 프로젝트는 <storageDir>/projects/<이름>.wcproj 로 저장된다
+  const storageDir = path.join(dir, 'storage');
+  const proj = path.join(storageDir, 'projects', 'p.wcproj');
+  return { dir, a, b, proj, storageDir, userData };
 }
 
 const launch = (args, userData) => electron.launch({ args: [MAIN, `--user-data-dir=${userData}`, ...args] });
 
-// main의 showSaveDialog/showOpenDialog를 미리 정해둔 경로로 대체
+// main의 showSaveDialog/showOpenDialog를 미리 정해둔 경로로 대체 (열기 경로용)
 const stubDialogs = (app, savePath, openPath) => app.evaluate(({ dialog }, paths) => {
   dialog.showSaveDialog = async () => ({ canceled: false, filePath: paths.save });
   dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [paths.open] });
 }, { save: savePath, open: openPath });
+
+// main settings 모듈(모듈 캐시 공유)의 storageDir를 임시 폴더로 교체 — 실제 보관 폴더 오염 방지.
+// evaluate 컨텍스트에는 require가 없으므로, 프로세스 전역 모듈 캐시에서 이미 로드된 settings.js를 찾아 set을 부른다.
+const setStorage = (app, dir) => app.evaluate((_electron, d) => {
+  const cache = process.mainModule.require('module')._cache; // 프로세스 전역 CommonJS 캐시
+  const key = Object.keys(cache).find((k) => k.replace(/\\/g, '/').endsWith('/src/main/settings.js'));
+  cache[key].exports.set({ storageDir: d });
+}, dir);
+
+// menu:project-save → 이름 모달이 뜨면 이름을 넣고 저장
+async function saveViaModal(app, win, name) {
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('menu:project-save'));
+  await win.waitForSelector('#project-name-dialog[open]', { timeout: 10000 });
+  await win.fill('#project-name-input', name);
+  await win.click('#project-name-ok');
+}
 
 const selectFirstSpan = (win, pane) => win.evaluate((sel) => {
   const span = document.querySelector(`${sel} .textLayer span`);
@@ -43,7 +64,7 @@ const markHighlight = (win) => win.evaluate(() => window.dispatchEvent(new Keybo
 })));
 
 test('프로젝트 저장 → 다시 열면 파일·뷰상태·마커가 복원된다', async () => {
-  const { dir, a, b, proj, userData } = setup('rt');
+  const { dir, a, b, proj, storageDir, userData } = setup('rt');
 
   // --- 1회차: 두 PDF를 열고, 마커를 찍고, Sync를 끄고, 프로젝트로 저장
   {
@@ -54,6 +75,7 @@ test('프로젝트 저장 → 다시 열면 파일·뷰상태·마커가 복원�
     await win.waitForSelector(`${L} .textLayer span`, { timeout: 20000 });
     await win.waitForSelector(`${R} .pdf-container canvas`, { timeout: 20000 });
     await stubDialogs(app, proj, proj);
+    await setStorage(app, storageDir);
 
     await selectFirstSpan(win, L);
     await markHighlight(win);
@@ -61,8 +83,8 @@ test('프로젝트 저장 → 다시 열면 파일·뷰상태·마커가 복원�
     await win.click('#btn-sync');
     await expect(win.locator('#btn-sync')).toHaveText('Sync: OFF');
 
-    // 메뉴 클릭과 같은 경로: main이 menu:project-save 를 push → 렌더러가 스냅샷을 만들어 invoke
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('menu:project-save'));
+    // 이름 모달에 'p'를 입력해 <storageDir>/projects/p.wcproj 로 저장
+    await saveViaModal(app, win, 'p');
     await expect.poll(() => fs.existsSync(proj), { timeout: 10000 }).toBe(true);
     await app.close();
   }
@@ -101,13 +123,14 @@ test('프로젝트 저장 → 다시 열면 파일·뷰상태·마커가 복원�
 });
 
 test('최근 프로젝트 목록에 쌓이고 id로 열 수 있다', async () => {
-  const { dir, a, b, proj, userData } = setup('recent');
+  const { dir, a, b, proj, storageDir, userData } = setup('recent');
   const app = await launch([a, b], userData);
   const win = await app.firstWindow();
   await win.waitForSelector(`${L} .pdf-container canvas`, { timeout: 20000 });
   await stubDialogs(app, proj, proj);
+  await setStorage(app, storageDir);
 
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('menu:project-save'));
+  await saveViaModal(app, win, 'p');
   await expect.poll(() => fs.existsSync(proj), { timeout: 10000 }).toBe(true);
 
   // 렌더러에는 경로가 아니라 id/이름만 내려간다
@@ -142,14 +165,14 @@ test('세션에서 열지 않은 파일은 프로젝트에 심어 저장할 수 
   await win.waitForSelector(`${L} .pdf-container canvas`, { timeout: 20000 });
   await stubDialogs(app, proj, proj);
 
-  // 렌더러가 손상돼 임의 경로를 스냅샷에 넣었다고 가정
+  // 렌더러가 손상돼 임의 경로를 스냅샷에 넣었다고 가정 (이름을 줘도 소유 검증이 먼저 막는다)
   const err = await win.evaluate(async () => {
     try {
       await window.wcompare.project.save({
         mode: 'pdf',
         files: { left: '/etc/hosts', right: null },
         view: {}, markers: { left: [], right: [] },
-      });
+      }, 'hacked');
       return null;
     } catch (e) { return String(e.message || e); }
   });

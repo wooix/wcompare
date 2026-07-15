@@ -60,6 +60,13 @@
   .wc-mark-highlight { mix-blend-mode:multiply; border-radius:2px; } /* 글자가 비쳐 보이게 */
   .wc-mark-underline { box-shadow: inset 0 -2px 0 currentColor; }
 
+  /* pane 우상단 닫기 버튼 — 문서가 로드된 pane에만 보인다 */
+  .pdf-close { display:none; position:absolute; top:6px; right:14px; z-index:4;
+    width:22px; height:22px; padding:0; line-height:1; border-radius:50%;
+    background:#333c; color:#bbb; border:1px solid #555; cursor:pointer; font:12px sans-serif; }
+  .pdf-pane.loaded .pdf-close { display:block; }
+  .pdf-close:hover { background:#a33; color:#fff; }
+
   /* 오래 걸리는 작업(번역)을 해당 pane 위에 겹쳐 표시 */
   .pdf-busy { position:absolute; inset:0; z-index:5; display:flex; flex-direction:column;
     align-items:center; justify-content:center; gap:8px; background:#2a2a2ae6;
@@ -77,6 +84,14 @@
   #statusbars > div { flex: 1; padding: 0 8px; overflow: hidden; white-space: nowrap; opacity: 0.5; }
   #statusbars > div.active { opacity: 1; }
   #pdf-status { display:none; height:22px; background:#1e1e1e; color:#9cdcfe; font:12px monospace; align-items:center; padding:0 8px; }
+
+  /* 모달 다이얼로그 다크 스타일 (프로젝트 이름 입력 / 설정) */
+  dialog { background:#1e1e1e; color:#ddd; border:1px solid #555; border-radius:6px;
+    padding:16px; font:13px sans-serif; }
+  dialog::backdrop { background:rgba(0,0,0,0.5); }
+  dialog input[type=text] { background:#222; color:#ddd; border:1px solid #555; border-radius:4px; padding:4px 6px; }
+  dialog button { background:#333; color:#ddd; border:1px solid #555; border-radius:4px; padding:3px 10px; cursor:pointer; margin-left:6px; }
+  dialog button:hover { background:#444; }
 </style>
 </head>
 <body>
@@ -115,6 +130,30 @@
   <div id="pdfview"></div>
   <div id="statusbars"><div id="vim-left"></div><div id="vim-right"></div></div>
   <div id="pdf-status"></div>
+
+  <dialog id="project-name-dialog">
+    <form method="dialog">
+      <div style="margin-bottom:8px; color:#ddd;">프로젝트 이름</div>
+      <input id="project-name-input" type="text" style="width:260px" autofocus />
+      <div style="margin-top:10px; text-align:right;">
+        <button value="cancel">취소</button>
+        <button id="project-name-ok" value="ok">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="settings-dialog">
+    <div style="color:#ddd; margin-bottom:10px; font-weight:bold;">설정</div>
+    <div style="margin-bottom:8px;">
+      <div style="color:#999; font-size:11px;">기록 보관 위치</div>
+      <input id="set-storage-path" type="text" readonly style="width:300px" />
+      <button id="set-storage-change">변경…</button>
+    </div>
+    <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-archive-pdf" /> PDF를 열 때 보관 폴더에 사본 저장</label>
+    <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-keep-translations" /> 번역본을 보관 폴더에 저장</label>
+    <div style="margin-top:10px; text-align:right;"><button id="settings-close">닫기</button></div>
+  </dialog>
+
   <script src="./app.js"></script>
 </body>
 </html>

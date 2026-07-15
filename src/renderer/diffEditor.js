@@ -77,6 +77,15 @@ export function createDiff(container) {
     raw: diff,
     innerOf, modelOf,
     open,
+    // 파일을 닫아 빈 모델로 되돌린다. setValue('')가 onDidChangeContent로 dirty를 다시 켜므로
+    // 반드시 그 뒤에 dirty=false로 되돌리고 콜백을 흘려 최종 상태를 "비었고 깨끗함"으로 맞춘다.
+    close: (side) => {
+      const model = modelOf(side);
+      monaco.editor.setModelLanguage(model, 'plaintext');
+      model.setValue('');
+      Object.assign(state[side], { path: null, eol: '\n', bom: false, dirty: false });
+      dirtyCbs.forEach((cb) => cb(side, false));
+    },
     getValue: (side) => modelOf(side).getValue(),
     getState: (side) => state[side],
     setDirty: (side, v) => { state[side].dirty = v; dirtyCbs.forEach((cb) => cb(side, v)); },
