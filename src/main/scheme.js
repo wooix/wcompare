@@ -17,8 +17,8 @@ function handleScheme() {
     const url = new URL(request.url);
     const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
     const filePath = path.join(ROOT, rel);
-    // 디렉토리 탈출 방지
-    if (!filePath.startsWith(ROOT)) return new Response('forbidden', { status: 403 });
+    const relative = path.relative(ROOT, filePath);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) return new Response('forbidden', { status: 403 });
     return net.fetch(pathToFileURL(filePath).toString());
   });
 }
