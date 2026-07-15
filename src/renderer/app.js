@@ -423,7 +423,7 @@ async function saveProject(as = false) {
       if (!name) return;
       res = await window.wcompare.project.save(snap, name);
     }
-    if (res?.path) setStatus(`프로젝트 저장됨: ${res.path.split('/').pop()}`);
+    if (res?.path) setStatus(`프로젝트 저장됨: ${res.display || res.path}`);
   } catch (e) {
     alert('프로젝트 저장 실패: ' + (e?.message || e));
   }

@@ -182,3 +182,80 @@ test('세션에서 열지 않은 파일은 프로젝트에 심어 저장할 수 
   await app.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// 보관 폴더(storageDir/projects) 안의 프로젝트는 이름 모달 없이 조용히 재저장된다.
+test('보관 폴더 안 프로젝트 재저장은 이름 모달 없이 조용히 이뤄진다', async () => {
+  const { dir, a, b, proj, storageDir, userData } = setup('silent');
+  const app = await launch([a, b], userData);
+  const win = await app.firstWindow();
+  await win.waitForSelector(`${L} .pdf-container canvas`, { timeout: 20000 });
+  await win.waitForSelector(`${R} .pdf-container canvas`, { timeout: 20000 });
+  await setStorage(app, storageDir);
+
+  // 1) 이름 모달로 보관 폴더에 최초 저장 → currentPath가 storageDir/projects 하위가 된다
+  await saveViaModal(app, win, 'p');
+  await expect.poll(() => fs.existsSync(proj), { timeout: 10000 }).toBe(true);
+
+  // 2) 상태줄을 지운 뒤 다시 저장 → 모달 없이 조용히 재저장되고 상태줄이 전체 경로로 되돌아온다
+  await win.evaluate(() => { document.getElementById('toolbar-status').textContent = 'RESET'; });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('menu:project-save'));
+  await expect(win.locator('#toolbar-status')).toContainText('projects/p.wcproj', { timeout: 10000 });
+  await expect(win.locator('#project-name-dialog[open]')).toHaveCount(0);
+
+  await app.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// 실사용 버그: 보관 폴더 밖(레거시) 프로젝트를 저장하면 조용히 재저장하지 않고
+// 이름 모달을 거쳐 보관 폴더로 옮겨 저장하고, 상태줄에 전체 경로를 보여준다.
+test('보관 폴더 밖(레거시) 프로젝트 저장은 이름 모달로 보관 폴더에 옮겨 저장된다', async () => {
+  const { dir, a, b, storageDir, userData } = setup('legacy');
+  const outside = path.join(dir, 'outside');
+  fs.mkdirSync(outside, { recursive: true });
+  const inStore = path.join(storageDir, 'projects', 'legacy.wcproj');
+  const legacyPath = path.join(outside, 'legacy.wcproj');
+
+  // --- 1회차: 보관 폴더에 유효한 프로젝트를 만든 뒤 그 파일을 보관 폴더 밖으로 복사 → 레거시 파일
+  {
+    const app = await launch([a, b], userData);
+    const win = await app.firstWindow();
+    await win.waitForSelector(`${L} .pdf-container canvas`, { timeout: 20000 });
+    await win.waitForSelector(`${R} .pdf-container canvas`, { timeout: 20000 });
+    await setStorage(app, storageDir);
+    await saveViaModal(app, win, 'legacy');
+    await expect.poll(() => fs.existsSync(inStore), { timeout: 10000 }).toBe(true);
+    fs.copyFileSync(inStore, legacyPath);
+    await app.close();
+  }
+
+  // --- 2회차: 빈 앱으로 띄워 레거시 파일을 연다 → currentPath가 보관 폴더 밖이 된다.
+  // (빈 앱에서 여는 이유: launch 인자로 미리 a·b를 띄우면 pdf-status가 이미 'L 1/5 R 1/3'이라
+  //  로드 완료 신호가 stale 매치되어 열기 중 setMode('pdf')의 상태줄 비움이 저장 뒤에 덮어씀.)
+  {
+    const app = await launch([], userData);
+    const win = await app.firstWindow();
+    await win.waitForSelector('#btn-open-left', { timeout: 20000 }); // 렌더러가 project:load 리스너를 걸 때까지
+    await setStorage(app, storageDir);
+    await app.evaluate(({ dialog }, p) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] });
+    }, legacyPath);
+    await win.evaluate(() => window.wcompare.project.open());
+    // 빈 앱 → a=5쪽,b=3쪽으로의 실제 전이를 기다린다. 이 신호가 나오면 onProjectLoad의
+    // setMode('pdf')(상태줄 비움)가 이미 끝났으므로 이후 저장의 상태 표시가 덮이지 않는다.
+    await win.waitForFunction(() => /L 1\/5\s+R 1\/3/.test(document.getElementById('pdf-status').textContent || ''), null, { timeout: 15000 });
+
+    // 저장 트리거 → 보관 폴더 밖이므로 조용히 재저장하지 않고 이름 모달이 뜬다
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('menu:project-save'));
+    await win.waitForSelector('#project-name-dialog[open]', { timeout: 10000 });
+
+    // 이름을 입력해 저장 → storageDir/projects/<이름>.wcproj 생성 + 상태줄에 전체 경로 표시
+    await win.fill('#project-name-input', 'moved');
+    await win.click('#project-name-ok');
+    const moved = path.join(storageDir, 'projects', 'moved.wcproj');
+    await expect.poll(() => fs.existsSync(moved), { timeout: 10000 }).toBe(true);
+    await expect(win.locator('#toolbar-status')).toContainText('projects/moved.wcproj', { timeout: 10000 });
+    await app.close();
+  }
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});

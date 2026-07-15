@@ -4,6 +4,7 @@
 //  - 저장: 저장 대상 파일 경로는 "이번 세션에 실제로 연 파일"(allowed)이어야 한다.
 const { app, dialog, BrowserWindow } = require('electron');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { serialize, parse, MAX_BYTES } = require('./projectFile.js');
 const { createRecents } = require('./recentProjects.js');
@@ -16,6 +17,19 @@ let onChange = () => {};
 let currentPath = null; // 현재 열린/저장된 프로젝트
 
 const store = () => (recents ||= createRecents(path.join(app.getPath('userData'), 'recent-projects.json')));
+
+// file이 dir 하위(또는 같음)인지. path.relative가 ..로 시작하지 않으면 하위.
+// ipc.js의 isInside와 동일한 로직(순환 require 방지를 위해 각 모듈에 지역 복사).
+function isInside(dir, file) {
+  const rel = path.relative(dir, path.resolve(file));
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+// 상태줄 표기용: 홈 디렉터리 접두사를 ~로 축약한다(전체 경로를 보여주되 짧게).
+function displayPath(p) {
+  const home = os.homedir();
+  return (p === home || p.startsWith(home + path.sep)) ? '~' + p.slice(home.length) : p;
+}
 
 // 렌더러가 아직 로딩 중이면(app.js는 12MB 번들이라 늦게 뜬다) 리스너가 없어 메시지가 조용히 유실된다.
 // main.js가 open-pair에 did-finish-load 가드를 두는 것과 같은 이유.
@@ -95,15 +109,21 @@ function assertOwned(snapshot) {
 async function save(win, snapshot, { saveAs = false, name } = {}) {
   assertOwned(snapshot);
 
+  const projectsDir = settings.dirFor('projects');
   let target;
   if (typeof name === 'string') {
     // 렌더러 이름 모달에서 받은 프로젝트 이름. 경로 구분자·상위 이동(/, \, :)을 막는다.
     if (!/^[^/\\:]{1,80}$/.test(name)) throw new Error('사용할 수 없는 프로젝트 이름입니다');
-    target = path.join(settings.dirFor('projects'), `${name}.${EXT}`);
-  } else if (!saveAs && currentPath) {
-    target = currentPath; // 이미 연 프로젝트에 조용히 재저장
+    target = path.join(projectsDir, `${name}.${EXT}`);
+  } else if (!saveAs && currentPath && isInside(normalize(projectsDir), normalize(currentPath))) {
+    // 보관 폴더(storageDir/projects) 하위일 때만 조용히 재저장.
+    // 레거시 위치(보관 폴더 밖)에 조용히 재저장하면 상태 표시가 파일명만 보여줘
+    // 사용자는 보관 폴더에 저장된 걸로 오인한다(실사용 버그) → 아래로 떨어져 이름 모달을 거친다.
+    // realpath 차이(/tmp→/private/tmp 등)로 오판하지 않도록 양쪽 모두 normalize 후 비교.
+    target = currentPath;
   } else {
-    // 처음 저장이거나 "다른 이름으로 저장" → 렌더러가 이름 모달을 띄우고 name과 함께 다시 부른다.
+    // 처음 저장이거나 "다른 이름으로 저장"이거나 레거시 위치의 프로젝트 →
+    // 렌더러가 이름 모달을 띄우고 name과 함께 다시 부른다(보관 폴더로 유도).
     const suggest = currentPath
       ? path.basename(currentPath, `.${EXT}`)
       : (snapshot?.files?.left ? path.basename(snapshot.files.left, path.extname(snapshot.files.left)) : 'untitled');
@@ -114,7 +134,7 @@ async function save(win, snapshot, { saveAs = false, name } = {}) {
   currentPath = target;
   store().add(target);
   onChange();
-  return { ok: true, path: target };
+  return { ok: true, path: target, display: displayPath(target) };
 }
 
 const currentProject = () => currentPath;
