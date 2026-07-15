@@ -1,5 +1,5 @@
-// test/e2e/pdf-m1.spec.js — M1 quick wins + 미러 점프(3.2) + 마커 미러링(3.1) + TOC 패널.
-// 미러 계열의 전제: 원문↔번역본(<이름>.pdf ↔ <이름>.ko.pdf)은 페이지 지오메트리를 공유한다.
+// test/e2e/pdf-m1.spec.js — M1 quick wins + 미러 점프(3.2) + TOC 패널.
+// 미러 점프의 전제: 원문↔번역본(<이름>.pdf ↔ <이름>.ko.pdf)은 페이지 지오메트리를 공유한다.
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');
 const os = require('node:os');
@@ -18,19 +18,6 @@ function writeKoPair(tag) {
   fs.writeFileSync(ko, makePdf(5, { height: 900, lines: 4 }));
   return { a, ko };
 }
-
-const selectFirstSpan = (win, pane) => win.evaluate((sel) => {
-  const span = document.querySelector(`${sel} .textLayer span`);
-  const range = document.createRange();
-  range.selectNodeContents(span);
-  const s = window.getSelection();
-  s.removeAllRanges();
-  s.addRange(range);
-}, pane);
-
-const markHighlight = (win) => win.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', {
-  key: 'H', shiftKey: true, metaKey: true, ctrlKey: true, bubbles: true, cancelable: true,
-})));
 
 test('야간 모드: 페이지 canvas만 반전되고 상태가 저장된다', async () => {
   const a = path.join(os.tmpdir(), `wc-m1-night-${Date.now()}.pdf`);
@@ -81,27 +68,6 @@ test('미러 점프: Alt+클릭으로 반대편이 같은 위치로 이동하고
 
   // 이동 직전 위치가 링크 히스토리에 쌓여 뒤로가기가 활성화된다
   await expect(win.locator('#btn-back')).toBeEnabled();
-
-  await app.close();
-  fs.rmSync(a, { force: true }); fs.rmSync(ko, { force: true });
-});
-
-test('마커 미러링: 원문에 형광펜을 그으면 번역본 같은 자리에 미러가 생긴다', async () => {
-  const { a, ko } = writeKoPair('mir' + Date.now());
-  const app = await electron.launch({ args: [MAIN, a, ko] });
-  const win = await app.firstWindow();
-  await win.waitForSelector(`${R} .textLayer span`, { timeout: 20000 });
-
-  await selectFirstSpan(win, L);
-  await markHighlight(win);
-  await expect(win.locator(`${L} .wc-mark-highlight`)).toHaveCount(1);
-  // 반대편(.ko.pdf)에 자동 미러 — 점선 스타일로 구분된다
-  await expect(win.locator(`${R} .wc-mark[data-origin="mirror"]`)).toHaveCount(1);
-
-  // 미러도 문서에 묶인다 → Switch 하면 문서를 따라간다
-  await win.click('#btn-switch');
-  await expect(win.locator(`${L} .wc-mark[data-origin="mirror"]`)).toHaveCount(1, { timeout: 10000 });
-  await expect(win.locator(`${R} .wc-mark-highlight:not([data-origin])`)).toHaveCount(1);
 
   await app.close();
   fs.rmSync(a, { force: true }); fs.rmSync(ko, { force: true });

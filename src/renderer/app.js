@@ -195,10 +195,7 @@ async function translatePdf() {
       const again = confirm('이미 번역본이 있습니다.\n\n[확인] 다시 번역하기\n[취소] 기존 번역본 열기');
       if (again) { translateDone = 0; showTranslateProgress(); res = await window.wcompare.translatePdf({ path: src, force: true }); }
     }
-    const target = translateTarget;
-    await openPdf(target, res.output);
-    // 원문↔번역본 문서쌍 등록 — 마커 미러링·미러 점프가 이 쌍을 기준으로 동작한다.
-    dualView?.setPair(pdfPaths[side], pdfPaths[target]);
+    await openPdf(translateTarget, res.output);
     if (res.partial) alert('일부 페이지는 번역에 실패해 원문 그대로 유지되었습니다.');
   } catch (e) {
     alert('번역 실패: ' + (e?.message || e));

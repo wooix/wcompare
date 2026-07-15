@@ -102,19 +102,6 @@ test('2MB를 초과하는 프로젝트는 저장(직렬화) 단계에서 거부�
   );
 });
 
-test('v2: 미러 마커의 group/origin이 보존되고 검증된다', () => {
-  const dirty = [
-    { ...MARKER, group: 'g'.padEnd(80, 'x'), origin: 'mirror' }, // 과대 group은 64자로 자름
-    { ...MARKER, id: 'mk2', origin: 'evil' },                     // 알 수 없는 origin은 버림
-    { ...MARKER, id: 'mk3' },                                     // 필드 없으면 만들지 않음(v1 왕복 동일)
-  ];
-  const clean = sanitizeMarkers(dirty);
-  assert.equal(clean[0].group.length, 64);
-  assert.equal(clean[0].origin, 'mirror');
-  assert.ok(!('origin' in clean[1]));
-  assert.ok(!('group' in clean[2]) && !('origin' in clean[2]));
-});
-
 test('v1 프로젝트는 v2 앱에서 그대로 열린다', () => {
   const text = JSON.stringify({
     format: 'wcompare-project', version: 1, mode: 'pdf',

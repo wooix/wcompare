@@ -1,7 +1,7 @@
 // src/renderer/pdfDualView.js — 두 PDFViewer를 좌/우 배치 + 비율 스크롤/줌/페이지/토글 동기.
 import { createPdfViewer } from './pdfViewer.js';
 import { syncTargetTop, syncTargetLeft } from './syncScroll.js';
-import { createMarkerLayer, newId } from './pdfMarkers.js';
+import { createMarkerLayer } from './pdfMarkers.js';
 
 // 오래 걸리는 작업(번역)을 해당 pane 위에 겹쳐 보여주는 오버레이.
 function createBusy(paneEl) {
@@ -323,7 +323,7 @@ export function createDualView(hostEl) {
   // 우클릭 메뉴 경로: contextInfo()가 미리 잡아 둔 캡처를 쓴다.
   function addMarker(kind, color) {
     if (!pending?.capture) return markSelection(kind, color);
-    mirror(pending.side, marks[pending.side].add(pending.capture, kind, color));
+    marks[pending.side].add(pending.capture, kind, color);
     window.getSelection()?.removeAllRanges();
     pending = null;
     return true;
@@ -337,60 +337,13 @@ export function createDualView(hostEl) {
     if (!side) return false;
     const capture = marks[side].captureSelection(panes[side]);
     if (!capture) return false;
-    mirror(side, marks[side].add(capture, kind, color));
+    marks[side].add(capture, kind, color);
     sel.removeAllRanges();
     return true;
   }
 
-  // ===== 마커 미러링 =====
-  // transpaper 오버레이 번역은 페이지 지오메트리를 보존한다 → 원문 p.N의 (x,y,w,h) 정규화
-  // 좌표는 번역본에서도 같은 내용을 가리킨다. 문서쌍이 양쪽에 열려 있으면 한쪽에 그은 마커를
-  // 반대편 문서에도 자동 생성한다(쌍은 공통 group id로 묶여 함께 지워진다).
-  let pairKeys = null; // 번역 완료 시 app.js가 명시 등록. 파일명 규칙으로도 자동 감지한다.
-  function setPair(a, b) { pairKeys = a && b ? [a, b] : null; }
-  // transpaper outputPathFor 규칙: <이름>.pdf ↔ <이름>.ko.pdf
-  function autoPairOf(key) {
-    const auto = /\.ko\.pdf$/i.test(key)
-      ? key.replace(/\.ko\.pdf$/i, '.pdf')
-      : key.replace(/\.pdf$/i, '.ko.pdf');
-    return auto !== key ? auto : null;
-  }
-  function pairOf(key) {
-    if (!key) return null;
-    if (pairKeys) {
-      if (key === pairKeys[0]) return pairKeys[1];
-      if (key === pairKeys[1]) return pairKeys[0];
-    }
-    return autoPairOf(key);
-  }
-
-  function mirror(side, made) {
-    if (!made?.length) return;
-    const dstKey = pairOf(marks[side].getDoc());
-    // 쌍 문서가 화면에 없으면 미러하지 않는다 — 저장 스냅샷이 side 기준이라 어차피 유실된다.
-    const dstSide = dstKey && SIDES.find((s) => marks[s].getDoc() === dstKey);
-    if (!dstSide) return;
-    let arr = markerStore.get(dstKey);
-    if (!arr) { arr = []; markerStore.set(dstKey, arr); }
-    for (const m of made) {
-      m.group ||= `g${newId()}`; // 원본·미러가 공유하는 그룹 — 삭제가 쌍으로 전파된다
-      arr.push({ ...m, id: newId(), origin: 'mirror', rects: m.rects.map((r) => ({ ...r })) });
-      marks[dstSide].renderPage(m.page);
-    }
-  }
-
   function removeMarker(side, id) {
-    if (!id) return;
-    const key = marks[side].getDoc();
-    const target = key && (markerStore.get(key) || []).find((m) => m.id === id);
-    marks[side].remove(id);
-    // 미러 쌍(같은 group)이 반대편 문서에 있으면 함께 지운다.
-    const g = target?.group;
-    const dstKey = g && pairOf(key);
-    if (!dstKey) return;
-    const twin = (markerStore.get(dstKey) || []).find((m) => m.group === g);
-    const dstSide = twin && SIDES.find((s) => marks[s].getDoc() === dstKey);
-    if (dstSide) marks[dstSide].remove(twin.id);
+    if (id) marks[side].remove(id);
   }
 
   // ===== 미러 점프 =====
@@ -515,7 +468,6 @@ export function createDualView(hostEl) {
     removeMarker,
     getMarkers,
     setMarkers,
-    setPair,
     jumpMirror,
     setOutline,
     isOutline: () => outlineOpen,
