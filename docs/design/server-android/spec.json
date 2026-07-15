@@ -1,0 +1,44 @@
+{
+  "title": "wcompare Cloud — A100 서버 프로젝트 저장 + Android 뷰어",
+  "grid": "aligned",
+  "zones": [
+    { "id": "client", "label": "Client", "palette": "blue" },
+    { "id": "edge", "label": "Edge", "palette": "green" },
+    { "id": "app", "label": "App · Project API", "palette": "orange" },
+    { "id": "jobq", "label": "Async · Job Queue", "palette": "yellow" },
+    { "id": "gpu", "label": "GPU · A100 Server", "palette": "purple" },
+    { "id": "data", "label": "Data", "palette": "teal" }
+  ],
+  "nodes": [
+    { "id": "desktop", "system": "electron-desktop", "zone": "client", "col": 0 },
+    { "id": "android", "system": "android-app", "zone": "client", "col": 3 },
+    { "id": "nginx", "system": "edge-nginx-2t", "zone": "edge", "col": 1 },
+    { "id": "auth", "system": "box-authn", "zone": "app", "col": 0, "label": "Auth", "sublabel": "JWT 검증" },
+    { "id": "api", "system": "api-fastapi-project", "zone": "app", "col": 1 },
+    { "id": "queue", "system": "queue-redis-duplex", "zone": "jobq", "col": 2 },
+    { "id": "worker", "system": "gpu-worker-transpaper", "zone": "gpu", "col": 2 },
+    { "id": "vllm", "system": "ml-llm", "zone": "gpu", "col": 3, "label": "vLLM", "sublabel": "번역 LLM · A100" },
+    { "id": "pg", "system": "postgres-db", "zone": "data", "col": 0, "sublabel": "프로젝트·마커" },
+    { "id": "objstore", "system": "object-store-2t", "zone": "data", "col": 2 }
+  ],
+  "edges": [
+    { "id": "desktop-save", "from": "desktop.bottom", "to": "nginx.tl", "kind": "sync", "flow": 1, "label": "프로젝트 저장" },
+    { "id": "nginx-proxy", "from": "nginx.bottom", "to": "api.top", "kind": "sync", "flow": 2, "label": "reverse proxy" },
+    { "id": "api-auth", "from": "api.in", "to": "auth.out", "kind": "sync", "flow": 3, "label": "토큰 검증" },
+    { "id": "api-pg", "from": "api.bl", "to": "pg.top", "kind": "sync", "flow": 4, "label": "메타·마커", "flowAt": 0.55, "labelAt": 0.55,
+      "waypoints": [{ "x": 276, "y": 916 }, { "x": 116, "y": 916 }] },
+    { "id": "api-objstore", "from": "api.br", "to": "objstore.tl", "kind": "sync", "flow": 5, "label": "PDF 원본", "flowAt": 0.45, "labelAt": 0.45,
+      "waypoints": [{ "x": 324, "y": 1132 }, { "x": 460, "y": 1132 }] },
+    { "id": "api-enqueue", "from": "api.out", "to": "queue.top", "kind": "async", "flow": 6, "label": "번역 작업 등록" },
+    { "id": "queue-worker", "from": "queue.bl", "to": "worker.tl", "kind": "async", "flow": 7, "label": "작업 수신", "flowAt": 0.25, "labelAt": 0.25 },
+    { "id": "worker-vllm", "from": "worker.out", "to": "vllm.in", "kind": "sync", "flow": 8, "label": "번역 추론" },
+    { "id": "worker-objstore", "from": "worker.bottom", "to": "objstore.top", "kind": "sync", "flow": 9, "label": "번역 PDF" },
+    { "id": "worker-progress", "from": "worker.tr", "to": "queue.br", "kind": "event", "flow": 10, "label": "진행률 이벤트", "flowAt": 0.2, "labelAt": 0.2 },
+    { "id": "android-load", "from": "android.bottom", "to": "nginx.tr", "kind": "sync", "flow": 11, "label": "프로젝트 로딩" }
+  ],
+  "legend": [
+    { "kind": "sync", "text": "동기 (HTTPS/SQL)" },
+    { "kind": "async", "text": "비동기 (작업 큐)" },
+    { "kind": "event", "text": "이벤트 (진행률 Pub/Sub)" }
+  ]
+}

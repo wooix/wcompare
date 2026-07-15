@@ -89,4 +89,9 @@ execFileSync('codesign', ['--force', '--deep', '--sign', '-', APP], { stdio: 'in
   console.log(`[pack-mac] require graph ok (${seen.size} files)`);
 }
 
+// 7) 타임스탬프 정규화. 프리빌트 Electron.app은 ZIP 배포라 파일 mtime이 1980-01-01(ZIP 최소일)로
+//    찍혀 있고, ditto 복제가 이를 물려받아 .app 폴더 수정일이 1980으로 보인다("빌드 안 된 듯"한 오해).
+//    번들 전체를 현재 시각으로 맞춘다. codesign은 내용 해시 기반이라 mtime 변경에 영향받지 않는다.
+execFileSync('find', [APP, '-exec', 'touch', '{}', '+']);
+
 console.log(`[pack-mac] built ${path.relative(ROOT, APP)}`);
