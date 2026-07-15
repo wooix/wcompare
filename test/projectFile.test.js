@@ -89,6 +89,19 @@ test('마커 검증: 신뢰할 수 없는 입력을 전부 걸러낸다', () => 
   assert.deepEqual(clean[0].rects, [{ x: 0, y: 1, w: 1, h: 0.5 }], '0~1로 clamp');
 });
 
+test('2MB를 초과하는 프로젝트는 저장(직렬화) 단계에서 거부한다', () => {
+  // 마커 5000개×rect 500개 상한만으로는 2MB를 못 막는다 — rect 하나가 pretty-print로 ~100바이트라
+  // 마커 수십 개(각 500 rects)면 이미 넘는다. 저장을 허용하면 "다시 열 수 없는 파일"이 생긴다.
+  const markers = Array.from({ length: 60 }, (_, i) => ({
+    id: `mk${i}`, page: i + 1, kind: 'highlight', color: '#ffd64a',
+    rects: Array.from({ length: 500 }, () => ({ x: 0.123456, y: 0.234567, w: 0.345678, h: 0.045678 })),
+  }));
+  assert.throws(
+    () => serialize({ mode: 'pdf', files: { left: '/x/a.pdf', right: null }, markers: { left: markers, right: [] } }, '/x/p.wcproj'),
+    /2MB/,
+  );
+});
+
 test('마커 개수/rect 상한으로 파서 DoS를 막는다', () => {
   const many = Array.from({ length: 9000 }, () => ({ ...MARKER }));
   assert.equal(sanitizeMarkers(many).length, 5000);

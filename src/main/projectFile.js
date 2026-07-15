@@ -35,7 +35,7 @@ function sanitizeMarkers(raw) {
 function serialize(snapshot, projectPath) {
   const dir = path.dirname(path.resolve(projectPath));
   const fileEntry = (abs) => (abs ? { abs, rel: path.relative(dir, abs) } : null);
-  return `${JSON.stringify({
+  const text = `${JSON.stringify({
     format: FORMAT,
     version: VERSION,
     savedAt: new Date().toISOString(),
@@ -57,6 +57,12 @@ function serialize(snapshot, projectPath) {
       right: sanitizeMarkers(snapshot.markers?.right),
     },
   }, null, 2)}\n`;
+  // parse가 MAX_BYTES를 거부하므로 여기서 막지 않으면 "저장은 되는데 다시 열 수 없는" 파일이 생긴다.
+  // 열기 쪽 1차 관문은 stat.size(바이트)라 length가 아니라 byteLength로 재야 한다.
+  if (Buffer.byteLength(text, 'utf8') > MAX_BYTES) {
+    throw new Error('프로젝트가 너무 커서 저장할 수 없습니다 (2MB 초과). 마커를 줄여 주세요.');
+  }
+  return text;
 }
 
 // 프로젝트와 파일이 함께 옮겨간 경우(git repo, 외장 드라이브)를 살리기 위해 rel을 먼저 시도한다.
