@@ -222,9 +222,13 @@ window.wcompare.onTranslateProgress(({ done }) => {
 async function openByPath(side, p) {
   if (isPdf(p)) return openPdf(side, p);
   if (!(await dirtyGuard(side))) return;
-  const file = await window.wcompare.readFile(p);
-  placeFile(side, file);
-  setMode('diff');
+  try {
+    const file = await window.wcompare.readFile(p);
+    placeFile(side, file);
+    setMode('diff');
+  } catch (e) {
+    alert('파일을 열 수 없습니다: ' + (e?.message || e)); // 최근 파일이 사라진 경우 등
+  }
 }
 async function openByDialog(side) {
   const file = await window.wcompare.openFileDialog();

@@ -135,7 +135,12 @@ export function createDualView(hostEl) {
 
   for (const side of SIDES) {
     viewers[side].onLinkNav(() => {
-      hist.back.push(snapshot());
+      const snap = snapshot();
+      const last = hist.back[hist.back.length - 1];
+      // goToDestination이 내부에서 goToPage를 거치면 콜백이 연달아 두 번 온다
+      // (스크롤 전이라 두 스냅샷이 동일) → 같은 위치는 한 번만 쌓는다.
+      if (last && last.left === snap.left && last.right === snap.right) return;
+      hist.back.push(snap);
       if (hist.back.length > HIST_MAX) hist.back.shift();
       hist.fwd.length = 0;
       emit();

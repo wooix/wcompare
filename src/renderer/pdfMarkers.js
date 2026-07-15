@@ -118,7 +118,10 @@ export function createMarkerLayer(viewer, store) {
     const n = viewer.pageCount();
     for (let p = 1; p <= n; p++) {
       const tl = viewer.textLayerOf(p);
-      if (tl) boxes.push({ page: p, b: tl.getBoundingClientRect() });
+      if (!tl) continue;
+      const b = tl.getBoundingClientRect();
+      // 레이아웃 전의 0-크기 박스는 나눗셈에서 NaN/Infinity 좌표를 만든다 (locate와 같은 방어)
+      if (b.width > 0 && b.height > 0) boxes.push({ page: p, b });
     }
 
     const byPage = new Map();
