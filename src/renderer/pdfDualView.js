@@ -290,6 +290,8 @@ export function createDualView(hostEl) {
   async function switchSides() {
     const pages = { left: viewers.left.currentPage(), right: viewers.right.currentPage() };
     const docs = { left: viewers.left.getDoc(), right: viewers.right.getDoc() };
+    // setDocument가 배율을 초기화하므로 교체 전에 읽어둔다 (교체 후 baseScale은 초기화된 값을 집는다).
+    const scale = fitWidth ? null : baseScale();
     if (!docs.left && !docs.right) return;
 
     const keys = { left: marks.left.getDoc(), right: marks.right.getDoc() };
@@ -302,7 +304,7 @@ export function createDualView(hostEl) {
     marks.right.setDoc(keys.left);
 
     if (fitWidth) for (const s of loadedSides()) viewers[s].setScaleValue('page-width');
-    else for (const s of loadedSides()) viewers[s].setScale(baseScale());
+    else for (const s of loadedSides()) viewers[s].setScale(scale);
 
     for (const side of loadedSides()) {
       const p = pages[other(side)];
