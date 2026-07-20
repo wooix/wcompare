@@ -1,20 +1,15 @@
 // src/main/ipc.js
-const { app, ipcMain, dialog, BrowserWindow, Menu, clipboard } = require('electron');
+const { ipcMain, dialog, BrowserWindow, Menu, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { readFile, writeFile, readBytes } = require('./fileService.js');
 const { lint } = require('./lint/lintService.js');
 const { translate, outputPathFor } = require('./transpaper.js');
 const { allowed, openedPdfs, normalize, allowPath } = require('./allowlist.js');
-const { createDict } = require('./dict.js');
+const { triggerShortcutDict } = require('./shortcutDict.js');
 const project = require('./project.js');
 const recentFiles = require('./recentFiles.js');
 const settings = require('./settings.js');
-
-// 실시간 사전: 오프라인 사전 + CLI 번역 엔진. userData에 MT 결과 캐시.
-// app.getPath는 준비 후에만 유효하므로 최초 조회 시점에 만든다(lazy).
-let dictInst = null;
-const dict = () => (dictInst ||= createDict({ cacheFile: path.join(app.getPath('userData'), 'dict-cache.json') }));
 
 // 형광펜 팔레트. 렌더러 pdfMarkers의 기본 노랑과 같은 투명도(0.45) 계열.
 const HIGHLIGHT_COLORS = [
@@ -127,26 +122,15 @@ function registerIpc() {
     return { ok: true, length: t.length };
   });
 
-  // ===== 실시간 사전 (영→한) =====
-  // 렌더러는 { text } 문자열만 보낸다(경로 없음). 토큰 3개 이하면 오프라인 사전 먼저,
-  // 미스거나 4토큰 이상이면 CLI 번역 엔진으로 넘긴다. 2000자 초과는 앞부분만.
-  ipcMain.handle('dict:query', async (_e, payload = {}) => {
-    const raw = payload && typeof payload.text === 'string' ? payload.text : '';
-    const text = raw.length > 2000 ? raw.slice(0, 2000) : raw;
-    if (!text.trim()) return { ok: false, error: '빈 요청' };
-    const tokens = text.trim().split(/\s+/).filter(Boolean);
-    if (tokens.length <= 3) {
-      const entries = dict().lookup(text);
-      if (entries) return { ok: true, kind: 'dict', entries };
-    }
-    try {
-      const { ko, engine } = await dict().translate(text);
-      return { ok: true, kind: 'mt', ko, engine };
-    } catch (e) {
-      return { ok: false, error: e?.message || String(e), canceled: !!e?.canceled };
-    }
-  });
-  ipcMain.handle('dict:cancel', () => { dictInst?.cancel(); return { ok: true }; });
+  // ===== 실시간 사전 (외부 앱 위임) =====
+  // 인자를 받지 않는다: 선택 텍스트는 ShortcutDictionary가 자체적으로 읽으므로
+  // 렌더러가 경로/명령/텍스트를 조립할 필요가 없다(allowlist 원칙 유지).
+  // main은 Control+Shift+D 키 이벤트만 시스템에 합성한다.
+  // 테스트(WCOMPARE_DICT_FAKE): 실제 osascript(시스템 키 이벤트) 대신 성공을 흉내 낸다
+  // — transpaper의 env 주입 시맨틱과 동일한 테스트 심(seam).
+  const fakeDictRun = process.env.WCOMPARE_DICT_FAKE ? () => Promise.resolve({}) : null;
+  ipcMain.handle('dict:external', async () =>
+    triggerShortcutDict(fakeDictRun ? { run: fakeDictRun } : undefined));
 
   ipcMain.handle('lint:run', (_e, payload) => lint(payload));
 

@@ -7,7 +7,6 @@ import { setStatus } from './toolbar.js';
 import { setupDnd } from './dnd.js';
 import { createDualView } from './pdfDualView.js';
 import { createMdToc } from './mdToc.js';
-import { createDictPopup, isEnglishQuery } from './dictPopup.js';
 
 const $ = (id) => document.getElementById(id);
 const isPdf = (p) => /\.pdf$/i.test(p || '');
@@ -124,7 +123,7 @@ function setMode(m) {
   $('pdf-status').style.display = m === 'pdf' ? 'flex' : 'none';
   $('btn-mode').textContent = m === 'diff' ? 'PDF Mode' : 'Diff Mode';
   if (m === 'diff') refreshStatus(); else setStatus('');
-  closeDictPopup(); // 모드가 바뀌면 사전 팝업은 닫는다(좌표/선택 컨텍스트가 달라진다)
+  resetDict(); // 모드가 바뀌면 선택 컨텍스트가 달라지므로 중복 전송 기준을 리셋한다
   updatePdfBtns();
   updateTocBtn();
 }
@@ -250,68 +249,60 @@ window.wcompare.onTranslateProgress(({ done }) => {
   showTranslateProgress();
 });
 
-// ===== 실시간 사전 (영→한) =====
-// 드래그로 고른 단어는 오프라인 사전에서, 구/문장은 CLI 엔진(agy→claude)에서 번역해
-// 선택 지점 근처 팝업에 보여준다. 활성 상태는 localStorage("wc-dict")로 유지.
-const dictPopup = createDictPopup();
+// ===== 실시간 사전 (외부 앱 위임) =====
+// 드래그로 텍스트를 선택하면 main이 시스템에 Control+Shift+D를 합성해
+// ShortcutDictionary가 그 선택을 사전에서 열게 한다(앱은 사전 데이터를 직접 갖지 않는다).
+// 한/영 판별·팝업이 없다 — 선택 텍스트는 외부 앱이 자체적으로 읽는다. 활성 상태는 localStorage("wc-dict").
 let dictOn = false;
 try { dictOn = localStorage.getItem('wc-dict') === '1'; } catch { /* 스토리지 불가 */ }
-let dictReq = 0;       // 최신 요청 번호 — 늦게 도착한 이전 결과는 버린다
-let dictSelTimer = 0;  // 선택 디바운스(모드별로 하나만 활성)
+let dictSelTimer = 0;             // 선택 디바운스(모드별로 하나만 활성)
+let lastSent = '';               // 직전에 보낸 선택 텍스트 — 같은 선택 중복 전송을 막는다
+let accessibilityWarned = false; // 접근성 권한 안내는 세션당 1회만(매 선택 반복 금지)
+let dictExternalCalls = 0;       // e2e 훅용 — external() 실제 호출 횟수(중복 전송 방지 이후에만 증가)
 
 function updateDictBtn() { $('btn-dict').textContent = 'Dict: ' + (dictOn ? 'ON' : 'OFF'); }
-function closeDictPopup() {
-  dictReq++; // 진행 중 조회의 결과를 무효화
+// 선택 해제·모드 전환·Dict OFF 시 — 팝업이 없으므로 중복 전송 기준(lastSent)만 리셋한다.
+function resetDict() {
   clearTimeout(dictSelTimer);
-  window.wcompare.dict.cancel();
-  dictPopup.close();
+  lastSent = '';
 }
 function setDict(on) {
   dictOn = on;
   try { localStorage.setItem('wc-dict', on ? '1' : '0'); } catch { /* 저장 실패 무시 */ }
-  if (!on) closeDictPopup();
+  if (!on) resetDict();
   updateDictBtn();
 }
 function toggleDict() { setDict(!dictOn); }
 
-async function runDictQuery(text, pos) {
-  const req = ++dictReq;
-  window.wcompare.dict.cancel(); // 이전 조회(엔진 자식) 중단
-  dictPopup.openAt(pos);
+// 선택이 확정되면 외부 사전 앱을 트리거한다. 같은 선택 반복은 무시한다.
+async function sendToExternalDict(text) {
+  const t = (text || '').trim();
+  if (!dictOn || !t) return;
+  if (t === lastSent) return; // 같은 선택으로 중복 전송 방지
+  lastSent = t;
+  dictExternalCalls++;
   try {
-    const res = await window.wcompare.dict.query(text);
-    if (req !== dictReq) return; // 더 새로운 선택이 왔다 → 이 결과는 버린다
-    if (!res || !res.ok) {
-      if (!res?.canceled) dictPopup.renderError(res?.error || '조회 실패');
-    } else if (res.kind === 'dict') dictPopup.renderDict(res.entries);
-    else dictPopup.renderMt(res.ko, res.engine);
+    const res = await window.wcompare.dict.external();
+    if (res && res.ok === false && res.code === 'no-accessibility') {
+      if (!accessibilityWarned) {
+        accessibilityWarned = true;
+        setStatus('손쉬운 사용 권한이 필요합니다: 시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용에서 wcompare를 허용하세요');
+      }
+    } else if (res && res.ok === false) {
+      console.warn('사전 트리거 실패:', res.message); // 그 외 오류는 조용히 무시(콘솔 경고만)
+    }
   } catch (e) {
-    if (req === dictReq) dictPopup.renderError(e?.message || String(e));
+    console.warn('사전 트리거 실패:', e?.message || e);
   }
 }
 
-// 영→한 전용: 라틴 2자 이상 + 한글 없음일 때만 조회한다(비영어 선택은 조용히 무시).
-function maybeDictQuery(text, pos) {
-  if (!dictOn) return;
-  const t = (text || '').trim();
-  if (!t || !isEnglishQuery(t)) return;
-  runDictQuery(t, pos);
-}
-
-// diff 모드: 양쪽 inner editor의 선택 변경(300ms 디바운스). 위치는 커서(getScrolledVisiblePosition)+컨테이너 rect.
-function diffSelectionPos(ed, sel) {
-  const dn = ed.getDomNode();
-  const rect = dn ? dn.getBoundingClientRect() : { left: 0, top: 0 };
-  const vp = ed.getScrolledVisiblePosition({ lineNumber: sel.positionLineNumber, column: sel.positionColumn })
-    || { left: 0, top: 0, height: 16 };
-  return { x: rect.left + vp.left, y: rect.top + vp.top + vp.height };
-}
+// diff 모드: 양쪽 inner editor의 선택 변경(300ms 디바운스).
 function handleDiffSelection(side) {
   if (!dictOn || mode !== 'diff') return;
   const ed = editorApi.innerOf(side);
   const sel = ed.getSelection();
-  if (!sel || sel.isEmpty()) { closeDictPopup(); return; } // 선택 해제 → 닫기
-  maybeDictQuery(editorApi.modelOf(side).getValueInRange(sel), diffSelectionPos(ed, sel));
+  if (!sel || sel.isEmpty()) { resetDict(); return; } // 선택 해제 → lastSent 리셋
+  sendToExternalDict(editorApi.modelOf(side).getValueInRange(sel));
 }
 for (const side of ['left', 'right']) {
   editorApi.innerOf(side).onDidChangeCursorSelection(() => {
@@ -329,26 +320,16 @@ function textLayerOf(node) {
 function handlePdfSelection() {
   if (!dictOn || mode !== 'pdf') return;
   const sel = window.getSelection();
-  if (!sel || sel.isCollapsed || !sel.anchorNode) { closeDictPopup(); return; }
-  if (dictPopup.contains(sel.anchorNode)) return; // 팝업 내부 텍스트 선택은 재트리거하지 않는다
-  if (!textLayerOf(sel.anchorNode)) return;       // PDF 본문(textLayer) 밖 선택은 무시
+  if (!sel || sel.isCollapsed || !sel.anchorNode) { resetDict(); return; }
+  if (!textLayerOf(sel.anchorNode)) return; // PDF 본문(textLayer) 밖 선택은 무시
   const text = sel.toString();
-  if (!text.trim()) { closeDictPopup(); return; }
-  const r = sel.getRangeAt(0).getBoundingClientRect();
-  maybeDictQuery(text, { x: r.left + r.width / 2, y: r.bottom });
+  if (!text.trim()) { resetDict(); return; }
+  sendToExternalDict(text);
 }
 $('pdfview').addEventListener('mouseup', () => {
   if (!dictOn || mode !== 'pdf') return;
   clearTimeout(dictSelTimer);
   dictSelTimer = setTimeout(handlePdfSelection, 250);
-});
-
-// 팝업 밖 mousedown / ESC 로 닫는다(선택 해제·모드 전환·Dict OFF는 각 경로에서 처리).
-window.addEventListener('mousedown', (e) => {
-  if (dictPopup.isOpen() && !dictPopup.contains(e.target)) closeDictPopup();
-});
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && dictPopup.isOpen()) { e.preventDefault(); closeDictPopup(); }
 });
 
 // ===== open routing =====
@@ -662,4 +643,4 @@ setMode('diff');
 refreshStatus();
 
 // e2e 테스트 훅 — 렌더러 내부 상태를 읽기 전용으로 노출한다(외부 네트워크·경로 생성과 무관).
-window.__wc = { editorApi, getMode: () => mode, isMdTocOpen: () => mdTocOpen, isDictOn: () => dictOn };
+window.__wc = { editorApi, getMode: () => mode, isMdTocOpen: () => mdTocOpen, isDictOn: () => dictOn, dictCalls: () => dictExternalCalls };

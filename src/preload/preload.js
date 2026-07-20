@@ -28,10 +28,10 @@ contextBridge.exposeInMainWorld('wcompare', {
     set: (patch) => ipcRenderer.invoke('settings:set', patch),
     pickStorageDir: () => ipcRenderer.invoke('settings:pick-storage-dir'),
   },
-  // 실시간 사전: 선택한 텍스트 문자열만 넘긴다(경로 없음).
+  // 실시간 사전: 외부 앱(ShortcutDictionary)에 위임 — 인자 없이 Control+Shift+D를 트리거한다.
+  // 선택 텍스트는 그 앱이 자체적으로 읽으므로 렌더러가 텍스트/경로를 넘기지 않는다.
   dict: {
-    query: (text) => ipcRenderer.invoke('dict:query', { text }),
-    cancel: () => ipcRenderer.invoke('dict:cancel'),
+    external: () => ipcRenderer.invoke('dict:external'),
   },
   onProjectLoad: (cb) => ipcRenderer.on('project:load', (_e, p) => cb(p)),
   // 최근 파일: 메뉴 클릭 시 main이 allowlist에 등록한 경로를 보낸다

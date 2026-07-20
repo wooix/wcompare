@@ -100,22 +100,6 @@
   #statusbars > div.active { opacity: 1; }
   #pdf-status { display:none; height:22px; background:#1e1e1e; color:#9cdcfe; font:12px monospace; align-items:center; padding:0 8px; }
 
-  /* 실시간 사전 팝업 — dialog 계열 다크 톤과 일치. 고정 배치, 뷰포트 안으로 보정(dictPopup.js).
-     PDF 야간 반전은 canvas에만 걸리므로 팝업은 원색을 유지한다. */
-  .wc-dict-popup { position:fixed; z-index:30; max-width:360px; max-height:40vh; overflow:auto;
-    background:#1e1e1e; color:#ddd; border:1px solid #555; border-radius:6px;
-    box-shadow:0 6px 24px rgba(0,0,0,0.5); padding:8px 10px; font:13px sans-serif; }
-  .wc-dict-loading { display:flex; align-items:center; gap:8px; color:#9cdcfe; }
-  .wc-dict-spin { width:14px; height:14px; border:2px solid #555; border-top-color:#9cdcfe;
-    border-radius:50%; animation:pdf-spin 0.9s linear infinite; }
-  .wc-dict-entries { display:flex; flex-direction:column; gap:4px; }
-  .wc-dict-row { display:flex; align-items:baseline; gap:6px; }
-  .wc-dict-ko { font-weight:bold; color:#fff; }
-  .wc-dict-pos { font-size:11px; color:#888; }
-  .wc-dict-mt { white-space:pre-wrap; line-height:1.4; }
-  .wc-dict-engine { margin-top:6px; font-size:11px; color:#888; text-align:right; }
-  .wc-dict-error { color:#f48771; font-size:12px; }
-
   /* 모달 다이얼로그 다크 스타일 (프로젝트 이름 입력 / 설정) */
   dialog { background:#1e1e1e; color:#ddd; border:1px solid #555; border-radius:6px;
     padding:16px; font:13px sans-serif; }
