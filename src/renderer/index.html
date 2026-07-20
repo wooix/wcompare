@@ -16,10 +16,21 @@
   #diff-controls, #pdf-controls { display:flex; align-items:center; gap:6px; color:#bbb; }
   #pdf-find-count { min-width:104px; font:11px monospace; color:#9cdcfe; }
   #pdf-find-count.miss { color:#f48771; }
-  #editor, #pdfview { height: calc(100% - 36px - 22px); }
+  #diff-wrap, #pdfview { height: calc(100% - 36px - 22px); }
+  #diff-wrap { display:flex; }
+  #editor { flex:1; min-width:0; height:100%; }
   #pdfview { display:none; }
   .pdf-pane { flex:1; position:relative; min-width:0; border-right:1px solid #333; display:flex; }
   .pdf-pane:last-child { border-right:none; }
+
+  /* Markdown TOC 드로어 — #diff-wrap의 좌/우 flex 자식. DOM 순서(left, editor, right)로
+     오른쪽 드로어가 창의 오른쪽 끝에 온다. 표시/숨김은 .show 클래스로 제어.
+     Monaco는 automaticLayout:true라 드로어 폭 변화에 스스로 재배치된다. */
+  .md-toc { flex:0 0 200px; display:none; overflow:auto; background:#242424; color:#ccc;
+    font:12px sans-serif; padding:4px; }
+  .md-toc.show { display:block; }
+  #md-toc-left { border-right:1px solid #333; }
+  #md-toc-right { border-left:1px solid #333; }
   .pdf-viewer-host { flex:1; position:relative; min-width:0; }
   .pdf-container { position:absolute; inset:0; overflow:auto; background:#2a2a2a; }
 
@@ -28,6 +39,10 @@
   .pdf-outline { flex:0 0 200px; display:none; overflow:auto; background:#242424;
     border-right:1px solid #333; color:#ccc; font:12px sans-serif; padding:4px; }
   .pdf-pane.outline-open .pdf-outline { display:block; }
+  /* 오른쪽 pane에서는 목차 드로어를 뷰어 오른쪽(창의 오른쪽 끝)에 붙인다.
+     flex 자식 기본 order 0 → outline만 order:1이면 viewer-host 뒤로 밀린다.
+     .pdf-close/.pdf-busy는 absolute라 order 영향을 받지 않는다. */
+  .pdf-pane:last-child .pdf-outline { order:1; border-right:none; border-left:1px solid #333; }
   .toc-item { display:flex; align-items:center; gap:2px; padding:2px 4px; border-radius:3px;
     cursor:pointer; white-space:nowrap; }
   .toc-item:hover { background:#333; }
@@ -85,6 +100,22 @@
   #statusbars > div.active { opacity: 1; }
   #pdf-status { display:none; height:22px; background:#1e1e1e; color:#9cdcfe; font:12px monospace; align-items:center; padding:0 8px; }
 
+  /* 실시간 사전 팝업 — dialog 계열 다크 톤과 일치. 고정 배치, 뷰포트 안으로 보정(dictPopup.js).
+     PDF 야간 반전은 canvas에만 걸리므로 팝업은 원색을 유지한다. */
+  .wc-dict-popup { position:fixed; z-index:30; max-width:360px; max-height:40vh; overflow:auto;
+    background:#1e1e1e; color:#ddd; border:1px solid #555; border-radius:6px;
+    box-shadow:0 6px 24px rgba(0,0,0,0.5); padding:8px 10px; font:13px sans-serif; }
+  .wc-dict-loading { display:flex; align-items:center; gap:8px; color:#9cdcfe; }
+  .wc-dict-spin { width:14px; height:14px; border:2px solid #555; border-top-color:#9cdcfe;
+    border-radius:50%; animation:pdf-spin 0.9s linear infinite; }
+  .wc-dict-entries { display:flex; flex-direction:column; gap:4px; }
+  .wc-dict-row { display:flex; align-items:baseline; gap:6px; }
+  .wc-dict-ko { font-weight:bold; color:#fff; }
+  .wc-dict-pos { font-size:11px; color:#888; }
+  .wc-dict-mt { white-space:pre-wrap; line-height:1.4; }
+  .wc-dict-engine { margin-top:6px; font-size:11px; color:#888; text-align:right; }
+  .wc-dict-error { color:#f48771; font-size:12px; }
+
   /* 모달 다이얼로그 다크 스타일 (프로젝트 이름 입력 / 설정) */
   dialog { background:#1e1e1e; color:#ddd; border:1px solid #555; border-radius:6px;
     padding:16px; font:13px sans-serif; }
@@ -99,6 +130,8 @@
     <button id="btn-open-left">Open Left</button>
     <button id="btn-open-right">Open Right</button>
     <button id="btn-mode">PDF Mode</button>
+    <button id="btn-toc" title="목차 패널 열기/닫기">TOC</button>
+    <button id="btn-dict" title="선택한 영어를 실시간으로 한국어로 번역(사전/엔진)">Dict: OFF</button>
     <span id="diff-controls">
       <button id="btn-save">Save</button>
       <button id="btn-prev-diff">◀ Diff</button>
@@ -109,7 +142,6 @@
     <span id="pdf-controls" style="display:none">
       <button id="btn-back" title="뒤로 (⌘←, 마우스 뒤로 버튼)">◀</button>
       <button id="btn-forward" title="앞으로 (⌘→, 마우스 앞으로 버튼)">▶</button>
-      <button id="btn-toc" title="목차 패널 열기/닫기">TOC</button>
       <button id="btn-zoom-out">−</button>
       <button id="btn-zoom-in">+</button>
       <span>Page <input id="pdf-page" type="number" min="1" value="1" style="width:46px" /> / <span id="pdf-total">0</span></span>
@@ -126,7 +158,11 @@
     <button id="btn-theme">Theme</button>
     <span id="toolbar-status" style="margin-left:auto; color:#9cdcfe; font:12px monospace;"></span>
   </div>
-  <div id="editor"></div>
+  <div id="diff-wrap">
+    <div id="md-toc-left" class="md-toc"></div>
+    <div id="editor"></div>
+    <div id="md-toc-right" class="md-toc"></div>
+  </div>
   <div id="pdfview"></div>
   <div id="statusbars"><div id="vim-left"></div><div id="vim-right"></div></div>
   <div id="pdf-status"></div>

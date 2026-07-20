@@ -69,6 +69,7 @@ function build() {
       { label: 'Toggle Vim', click: () => send('menu:toggle-vim') },
       { label: 'Toggle Theme', click: () => send('menu:toggle-theme') },
       { label: 'Toggle Night (PDF)', click: () => send('menu:toggle-night') },
+      { label: 'Toggle Dictionary', click: () => send('menu:toggle-dict') },
       { type: 'separator' }, { role: 'toggleDevTools' },
     ]},
   ]);

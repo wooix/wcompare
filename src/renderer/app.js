@@ -6,6 +6,8 @@ import { setupVim, toggleVim, setSaveHandler, getActiveSide } from './vimBinding
 import { setStatus } from './toolbar.js';
 import { setupDnd } from './dnd.js';
 import { createDualView } from './pdfDualView.js';
+import { createMdToc } from './mdToc.js';
+import { createDictPopup, isEnglishQuery } from './dictPopup.js';
 
 const $ = (id) => document.getElementById(id);
 const isPdf = (p) => /\.pdf$/i.test(p || '');
@@ -54,6 +56,36 @@ let mode = 'diff';
 let dualView = null;
 const pdfPaths = { left: null, right: null };
 let pdfState = null;
+
+// ===== markdown TOC (diff 모드) =====
+// 열림 상태는 세션 한정 — PDF outline과 대칭(localStorage 불필요).
+let mdTocOpen = false;
+const mdToc = createMdToc(editorApi, {
+  leftEl: $('md-toc-left'),
+  rightEl: $('md-toc-right'),
+  onChange: () => updateTocBtn(), // 콘텐츠 변경(디바운스) → 표시 규칙 재평가 + 재렌더
+});
+function toggleMdToc() { mdTocOpen = !mdTocOpen; updateTocBtn(); }
+
+// #btn-toc는 두 모드에서 보인다. pdf 모드는 뷰어 outline, diff 모드는 md TOC를 제어한다.
+// setMode / 파일 open·close / 토글 시 이 함수 하나로 버튼 상태와 드로어 표시를 맞춘다.
+function updateTocBtn() {
+  const btn = $('btn-toc');
+  if (!btn) return;
+  if (mode === 'pdf') {
+    // pdf 모드 라벨은 renderPdfStatus도 갱신하지만, 모드 전환 직후 상태가 안 와도 맞도록 여기서도 맞춘다.
+    btn.disabled = false;
+    btn.textContent = 'TOC' + (dualView && dualView.isOutline() ? ' ✓' : '');
+    return;
+  }
+  const isMd = (s) => !!editorApi.getState(s).path && editorApi.languageOf(s) === 'markdown';
+  const anyMd = isMd('left') || isMd('right');
+  if (!anyMd) mdTocOpen = false; // markdown 파일이 한쪽도 없으면 열림 상태 해제
+  btn.disabled = !anyMd;
+  btn.textContent = 'TOC' + (mdTocOpen ? ' ✓' : '');
+  mdToc.render('left', mdTocOpen && isMd('left'));
+  mdToc.render('right', mdTocOpen && isMd('right'));
+}
 function ensureDualView() {
   if (dualView) return dualView;
   dualView = createDualView($('pdfview'));
@@ -83,7 +115,8 @@ function renderPdfStatus(st) {
 }
 function setMode(m) {
   mode = m;
-  $('editor').style.display = m === 'diff' ? '' : 'none';
+  // #diff-wrap 전체를 토글해야 좌/우 md TOC 드로어도 에디터와 함께 사라진다.
+  $('diff-wrap').style.display = m === 'diff' ? 'flex' : 'none';
   $('pdfview').style.display = m === 'pdf' ? 'flex' : 'none';
   $('diff-controls').style.display = m === 'diff' ? 'flex' : 'none';
   $('pdf-controls').style.display = m === 'pdf' ? 'flex' : 'none';
@@ -91,7 +124,9 @@ function setMode(m) {
   $('pdf-status').style.display = m === 'pdf' ? 'flex' : 'none';
   $('btn-mode').textContent = m === 'diff' ? 'PDF Mode' : 'Diff Mode';
   if (m === 'diff') refreshStatus(); else setStatus('');
+  closeDictPopup(); // 모드가 바뀌면 사전 팝업은 닫는다(좌표/선택 컨텍스트가 달라진다)
   updatePdfBtns();
+  updateTocBtn();
 }
 async function openPdf(side, p) {
   try {
@@ -215,6 +250,107 @@ window.wcompare.onTranslateProgress(({ done }) => {
   showTranslateProgress();
 });
 
+// ===== 실시간 사전 (영→한) =====
+// 드래그로 고른 단어는 오프라인 사전에서, 구/문장은 CLI 엔진(agy→claude)에서 번역해
+// 선택 지점 근처 팝업에 보여준다. 활성 상태는 localStorage("wc-dict")로 유지.
+const dictPopup = createDictPopup();
+let dictOn = false;
+try { dictOn = localStorage.getItem('wc-dict') === '1'; } catch { /* 스토리지 불가 */ }
+let dictReq = 0;       // 최신 요청 번호 — 늦게 도착한 이전 결과는 버린다
+let dictSelTimer = 0;  // 선택 디바운스(모드별로 하나만 활성)
+
+function updateDictBtn() { $('btn-dict').textContent = 'Dict: ' + (dictOn ? 'ON' : 'OFF'); }
+function closeDictPopup() {
+  dictReq++; // 진행 중 조회의 결과를 무효화
+  clearTimeout(dictSelTimer);
+  window.wcompare.dict.cancel();
+  dictPopup.close();
+}
+function setDict(on) {
+  dictOn = on;
+  try { localStorage.setItem('wc-dict', on ? '1' : '0'); } catch { /* 저장 실패 무시 */ }
+  if (!on) closeDictPopup();
+  updateDictBtn();
+}
+function toggleDict() { setDict(!dictOn); }
+
+async function runDictQuery(text, pos) {
+  const req = ++dictReq;
+  window.wcompare.dict.cancel(); // 이전 조회(엔진 자식) 중단
+  dictPopup.openAt(pos);
+  try {
+    const res = await window.wcompare.dict.query(text);
+    if (req !== dictReq) return; // 더 새로운 선택이 왔다 → 이 결과는 버린다
+    if (!res || !res.ok) {
+      if (!res?.canceled) dictPopup.renderError(res?.error || '조회 실패');
+    } else if (res.kind === 'dict') dictPopup.renderDict(res.entries);
+    else dictPopup.renderMt(res.ko, res.engine);
+  } catch (e) {
+    if (req === dictReq) dictPopup.renderError(e?.message || String(e));
+  }
+}
+
+// 영→한 전용: 라틴 2자 이상 + 한글 없음일 때만 조회한다(비영어 선택은 조용히 무시).
+function maybeDictQuery(text, pos) {
+  if (!dictOn) return;
+  const t = (text || '').trim();
+  if (!t || !isEnglishQuery(t)) return;
+  runDictQuery(t, pos);
+}
+
+// diff 모드: 양쪽 inner editor의 선택 변경(300ms 디바운스). 위치는 커서(getScrolledVisiblePosition)+컨테이너 rect.
+function diffSelectionPos(ed, sel) {
+  const dn = ed.getDomNode();
+  const rect = dn ? dn.getBoundingClientRect() : { left: 0, top: 0 };
+  const vp = ed.getScrolledVisiblePosition({ lineNumber: sel.positionLineNumber, column: sel.positionColumn })
+    || { left: 0, top: 0, height: 16 };
+  return { x: rect.left + vp.left, y: rect.top + vp.top + vp.height };
+}
+function handleDiffSelection(side) {
+  if (!dictOn || mode !== 'diff') return;
+  const ed = editorApi.innerOf(side);
+  const sel = ed.getSelection();
+  if (!sel || sel.isEmpty()) { closeDictPopup(); return; } // 선택 해제 → 닫기
+  maybeDictQuery(editorApi.modelOf(side).getValueInRange(sel), diffSelectionPos(ed, sel));
+}
+for (const side of ['left', 'right']) {
+  editorApi.innerOf(side).onDidChangeCursorSelection(() => {
+    if (!dictOn || mode !== 'diff') return;
+    clearTimeout(dictSelTimer);
+    dictSelTimer = setTimeout(() => handleDiffSelection(side), 300);
+  });
+}
+
+// PDF 모드: #pdfview mouseup(250ms 디바운스). 선택이 .textLayer 내부이고 비어있지 않을 때만.
+function textLayerOf(node) {
+  const el = node && (node.nodeType === 1 ? node : node.parentElement);
+  return el?.closest?.('.textLayer') || null;
+}
+function handlePdfSelection() {
+  if (!dictOn || mode !== 'pdf') return;
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.anchorNode) { closeDictPopup(); return; }
+  if (dictPopup.contains(sel.anchorNode)) return; // 팝업 내부 텍스트 선택은 재트리거하지 않는다
+  if (!textLayerOf(sel.anchorNode)) return;       // PDF 본문(textLayer) 밖 선택은 무시
+  const text = sel.toString();
+  if (!text.trim()) { closeDictPopup(); return; }
+  const r = sel.getRangeAt(0).getBoundingClientRect();
+  maybeDictQuery(text, { x: r.left + r.width / 2, y: r.bottom });
+}
+$('pdfview').addEventListener('mouseup', () => {
+  if (!dictOn || mode !== 'pdf') return;
+  clearTimeout(dictSelTimer);
+  dictSelTimer = setTimeout(handlePdfSelection, 250);
+});
+
+// 팝업 밖 mousedown / ESC 로 닫는다(선택 해제·모드 전환·Dict OFF는 각 경로에서 처리).
+window.addEventListener('mousedown', (e) => {
+  if (dictPopup.isOpen() && !dictPopup.contains(e.target)) closeDictPopup();
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && dictPopup.isOpen()) { e.preventDefault(); closeDictPopup(); }
+});
+
 // ===== open routing =====
 async function openByPath(side, p) {
   if (isPdf(p)) return openPdf(side, p);
@@ -248,6 +384,7 @@ async function closeFile(side) {
     editorApi.close(side);
     linters[side].cancel();
     refreshStatus();
+    updateTocBtn(); // 닫힌 side가 markdown이면 드로어를 숨기고 버튼 상태를 갱신
   }
 }
 
@@ -269,7 +406,11 @@ $('btn-switch').onclick = () => switchSides();
 $('btn-translate').onclick = () => translatePdf();
 $('btn-back').onclick = () => dualView?.goBack();
 $('btn-forward').onclick = () => dualView?.goForward();
-$('btn-toc').onclick = () => dualView?.setOutline(!dualView.isOutline());
+$('btn-toc').onclick = () => {
+  if (mode === 'pdf') dualView?.setOutline(!dualView.isOutline());
+  else toggleMdToc();
+};
+$('btn-dict').onclick = () => toggleDict();
 
 // ===== 설정 다이얼로그 wiring (요소는 항상 존재하므로 한 번만 건다) =====
 $('set-archive-pdf').onchange = (e) => window.wcompare.settings.set({ archivePdfOnOpen: e.target.checked });
@@ -498,6 +639,7 @@ const MENU = {
   'menu:toggle-vim': () => toggleVim(editorApi),
   'menu:toggle-theme': () => { theme = theme === 'vs-dark' ? 'vs' : 'vs-dark'; monaco.editor.setTheme(theme); },
   'menu:toggle-night': () => toggleNight(),
+  'menu:toggle-dict': () => toggleDict(),
   'menu:settings': () => openSettings(),
 };
 window.wcompare.onMenu((ch) => { MENU[ch]?.(); });
@@ -515,5 +657,9 @@ window.wcompare.onOpenPair(async ({ left, right }) => {
   if (right) await openByPath('right', right);
 });
 
+updateDictBtn();
 setMode('diff');
 refreshStatus();
+
+// e2e 테스트 훅 — 렌더러 내부 상태를 읽기 전용으로 노출한다(외부 네트워크·경로 생성과 무관).
+window.__wc = { editorApi, getMode: () => mode, isMdTocOpen: () => mdTocOpen, isDictOn: () => dictOn };

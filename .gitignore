@@ -5,3 +5,4 @@ release/
 test-results/
 playwright-report/
 .omc/
+assets/dict/src/

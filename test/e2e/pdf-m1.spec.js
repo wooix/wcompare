@@ -115,6 +115,32 @@ test('목차 없는 PDF는 TOC 패널에 (목차 없음)을 보여준다', async
   fs.rmSync(a, { force: true });
 });
 
+test('오른쪽 pane의 TOC 드로어는 뷰어 오른쪽(창의 오른쪽 끝)에 붙는다', async () => {
+  const a = path.join(os.tmpdir(), `wc-m1-rtoc-a-${Date.now()}.pdf`);
+  const b = path.join(os.tmpdir(), `wc-m1-rtoc-b-${Date.now()}.pdf`);
+  fs.writeFileSync(a, makePdf(3, { height: 900, outline: true }));
+  fs.writeFileSync(b, makePdf(3, { height: 900, outline: true }));
+  const app = await electron.launch({ args: [MAIN, a, b] });
+  const win = await app.firstWindow();
+  await win.waitForSelector(`${R} canvas`, { timeout: 20000 });
+
+  await win.click('#btn-toc');
+  await expect(win.locator(`${L} .pdf-outline`)).toBeVisible();
+  await expect(win.locator(`${R} .pdf-outline`)).toBeVisible();
+
+  // 오른쪽 pane: 드로어가 뷰어보다 오른쪽(x가 더 큼) — order:1 로 뷰어 뒤에 배치
+  const rOutline = await win.locator(`${R} .pdf-outline`).boundingBox();
+  const rHost = await win.locator(`${R} .pdf-viewer-host`).boundingBox();
+  expect(rOutline.x).toBeGreaterThan(rHost.x);
+  // 왼쪽 pane: 드로어가 뷰어보다 왼쪽(대칭) — 기존 동작 유지
+  const lOutline = await win.locator(`${L} .pdf-outline`).boundingBox();
+  const lHost = await win.locator(`${L} .pdf-viewer-host`).boundingBox();
+  expect(lOutline.x).toBeLessThan(lHost.x);
+
+  await app.close();
+  fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
+});
+
 test('전체 텍스트 복사 IPC: main 경유로 클립보드에 기록된다', async () => {
   const app = await electron.launch({ args: [MAIN] });
   const win = await app.firstWindow();

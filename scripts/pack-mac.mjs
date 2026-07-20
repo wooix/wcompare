@@ -35,10 +35,15 @@ rmSync(path.join(RES, 'default_app.asar'), { force: true });
 const APPDIR = path.join(RES, 'app');
 mkdirSync(APPDIR, { recursive: true });
 cpSync(path.join(ROOT, 'package.json'), path.join(APPDIR, 'package.json'));
-const skip = (s) => /\.map$/.test(s) || /dist\/(demo|demo-pdf|spike|spike-pdf)\.png$/.test(s);
+// assets/dict/src 는 원본 캐시(수십 MB, 런타임 미사용)라 번들에서 제외한다.
+const skip = (s) =>
+  /\.map$/.test(s) ||
+  /dist\/(demo|demo-pdf|spike|spike-pdf)\.png$/.test(s) ||
+  /assets\/dict\/src(\/|$)/.test(s);
 // src/ 전체 복사 — 메인 프로세스의 require 그래프(src/main → src/shared 등)가 번들 안에서 모두 해소되도록.
 // (src/renderer 소스는 런타임 미사용이지만 KB 단위라 함께 복사: 누락 리스크 제거가 우선)
-for (const d of ['src', 'dist']) {
+// assets/ 는 오프라인 사전(assets/dict/en-ko.json) 등 런타임 데이터 — src 캐시만 skip 필터로 제외.
+for (const d of ['src', 'dist', 'assets']) {
   cpSync(path.join(ROOT, d), path.join(APPDIR, d), { recursive: true, filter: (s) => !skip(s) });
 }
 

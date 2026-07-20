@@ -28,6 +28,11 @@ contextBridge.exposeInMainWorld('wcompare', {
     set: (patch) => ipcRenderer.invoke('settings:set', patch),
     pickStorageDir: () => ipcRenderer.invoke('settings:pick-storage-dir'),
   },
+  // 실시간 사전: 선택한 텍스트 문자열만 넘긴다(경로 없음).
+  dict: {
+    query: (text) => ipcRenderer.invoke('dict:query', { text }),
+    cancel: () => ipcRenderer.invoke('dict:cancel'),
+  },
   onProjectLoad: (cb) => ipcRenderer.on('project:load', (_e, p) => cb(p)),
   // 최근 파일: 메뉴 클릭 시 main이 allowlist에 등록한 경로를 보낸다
   onOpenRecentFile: (cb) => ipcRenderer.on('menu:open-recent-file', (_e, p) => cb(p)),
@@ -38,7 +43,7 @@ contextBridge.exposeInMainWorld('wcompare', {
       'menu:open-left', 'menu:open-right', 'menu:close-left', 'menu:close-right', 'menu:save',
       'menu:project-save', 'menu:project-save-as',
       'menu:next-diff', 'menu:prev-diff', 'menu:toggle-ws', 'menu:toggle-vim', 'menu:toggle-theme',
-      'menu:toggle-night', 'menu:settings',
+      'menu:toggle-night', 'menu:toggle-dict', 'menu:settings',
     ];
     channels.forEach((ch) => ipcRenderer.on(ch, () => cb(ch)));
   },
