@@ -11,6 +11,10 @@ const send = (ch) => {
 };
 const focused = () => BrowserWindow.getFocusedWindow();
 
+// main.js가 주입하는 메뉴 액션 핸들러(예: newWindow) — project.setOnChange 주입 패턴과 동일.
+let handlers = {};
+function setHandlers(h) { handlers = { ...handlers, ...h }; }
+
 function recentSubmenu() {
   const items = project.list();
   if (!items.length) return [{ label: '(없음)', enabled: false }];
@@ -44,6 +48,8 @@ function build() {
   return Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
     { label: 'File', submenu: [
+      { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => handlers.newWindow?.() },
+      { type: 'separator' },
       { label: 'Open Left…', accelerator: 'CmdOrCtrl+O', click: () => send('menu:open-left') },
       { label: 'Open Right…', accelerator: 'CmdOrCtrl+Shift+O', click: () => send('menu:open-right') },
       { label: 'Recent Files', submenu: recentFilesSubmenu() },
@@ -77,4 +83,4 @@ function build() {
 
 function applyMenu() { Menu.setApplicationMenu(build()); }
 
-module.exports = { applyMenu };
+module.exports = { applyMenu, setHandlers };

@@ -10,6 +10,7 @@ const { triggerShortcutDict } = require('./shortcutDict.js');
 const project = require('./project.js');
 const recentFiles = require('./recentFiles.js');
 const settings = require('./settings.js');
+const { createTranslationJobs } = require('./translationJobs.js');
 
 // 형광펜 팔레트. 렌더러 pdfMarkers의 기본 노랑과 같은 투명도(0.45) 계열.
 const HIGHLIGHT_COLORS = [
@@ -19,7 +20,8 @@ const HIGHLIGHT_COLORS = [
   { label: '분홍', color: 'rgba(255, 128, 192, 0.45)' },
 ];
 
-let job = null; // 동시에 하나의 번역만 허용
+// 창(webContents.id)별 번역 job — 여러 창에서 동시에 서로 다른 PDF를 번역할 수 있다.
+const jobs = createTranslationJobs();
 
 function readWithPath(p) {
   const meta = readFile(p);
@@ -135,20 +137,24 @@ function registerIpc() {
   ipcMain.handle('lint:run', (_e, payload) => lint(payload));
 
   ipcMain.handle('pdf:translate', async (e, { path: rawPath, force } = {}) => {
+    const wc = e.sender;
+    const wcId = wc.id;
     const p = normalize(rawPath);
     if (!openedPdfs.has(p)) throw new Error('translate denied: 이 세션에서 연 PDF가 아닙니다');
-    if (job) throw new Error('이미 번역이 진행 중입니다');
+    if (jobs.has(wcId)) throw new Error('이 창에서 이미 번역이 진행 중입니다');
 
     const output = settings.get().keepTranslationsInStorage
       ? path.join(settings.dirFor('translations'), path.basename(p).replace(/\.pdf$/i, '') + '.ko.pdf')
       : outputPathFor(p);
     if (!force && fs.existsSync(output)) return { output, existed: true };
+    // 같은 출력 경로를 다른 창이 이미 쓰고 있으면 거부 — 같은 파일을 두 창에서 동시에 덮어쓰는 것을 막는다.
+    if (jobs.outputInUse(output)) throw new Error('같은 파일을 다른 창에서 번역 중입니다');
 
-    const wc = e.sender;
-    job = translate(p, {
+    const job = translate(p, {
       onProgress: (d) => { if (!wc.isDestroyed()) wc.send('pdf:translate:progress', d); },
       output,
     });
+    jobs.add(wcId, output, job);
     try {
       const res = await job.promise;
       const out = normalize(res.output);
@@ -156,12 +162,12 @@ function registerIpc() {
       openedPdfs.add(out);
       return { ...res, output: out, existed: false };
     } finally {
-      job = null;
+      jobs.remove(wcId);
     }
   });
 
-  ipcMain.handle('pdf:translate:cancel', () => {
-    job?.cancel();
+  ipcMain.handle('pdf:translate:cancel', (e) => {
+    jobs.cancel(e.sender.id);
     return { ok: true };
   });
 
@@ -211,6 +217,9 @@ function registerIpc() {
 }
 
 // 앱 종료 시 호출 — detached로 띄운 transpaper(및 그 자식 agy/claude)가 살아남지 않도록.
-function cancelTranslation() { job?.cancel(); job = null; }
+function cancelTranslation() { jobs.cancelAll(); }
 
-module.exports = { registerIpc, allowPath, cancelTranslation };
+// 특정 창이 파괴될 때 그 창의 번역만 취소한다(main.js의 webContents 'destroyed' 훅에서 호출).
+function cancelForWebContents(wcId) { jobs.cancel(wcId); }
+
+module.exports = { registerIpc, allowPath, cancelTranslation, cancelForWebContents };
