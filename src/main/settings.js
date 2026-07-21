@@ -10,6 +10,15 @@ const DEFAULTS = {
   storageDir: path.join(os.homedir(), '.local', 'wcompare'),
   archivePdfOnOpen: false,
   keepTranslationsInStorage: false,
+  // 툴바 토글 단축키(사용자 변경 가능). 기본은 기존 기능과 겹치지 않게 ⌥ 위주로 고른다
+  // (⌘F=찾기, ⌘S=저장, ⌘N=새 창, ⌘→=앞으로가 이미 쓰여 충돌하므로).
+  shortcuts: {
+    dict: 'Cmd+D',
+    fit: 'Alt+F',
+    sync: 'Alt+S',
+    night: 'Alt+N',
+    switch: 'Alt+ArrowRight',
+  },
 };
 
 let store = null;

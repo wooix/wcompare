@@ -106,6 +106,8 @@ function registerIpc() {
     const next = {};
     if (typeof patch.archivePdfOnOpen === 'boolean') next.archivePdfOnOpen = patch.archivePdfOnOpen;
     if (typeof patch.keepTranslationsInStorage === 'boolean') next.keepTranslationsInStorage = patch.keepTranslationsInStorage;
+    // shortcuts는 object면 그대로 넘기고 settingsStore가 하위 키·문자열 값을 재검증한다.
+    if (patch.shortcuts && typeof patch.shortcuts === 'object') next.shortcuts = patch.shortcuts;
     return settings.set(next);
   });
   ipcMain.handle('settings:pick-storage-dir', async (e) => {

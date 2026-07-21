@@ -2,19 +2,32 @@
 // createSettingsStore(filePath, defaults) → { get, set }
 //  - get(): 파일을 읽어 defaults와 merge(깨졌으면 defaults). 알 수 없는 키는 버린다.
 //  - set(patch): 허용 키(defaults의 키)만, 타입이 맞을 때만 반영. tmp+rename 원자 기록 후 결과 반환.
-//    · storageDir: 절대경로 문자열,  archivePdfOnOpen/keepTranslationsInStorage: boolean.
+//    · storageDir: 절대경로 문자열,  boolean 키: boolean,  object 키(shortcuts): 하위 병합.
 const fs = require('node:fs');
 const path = require('node:path');
+
+const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
 function createSettingsStore(filePath, defaults) {
   const keys = Object.keys(defaults);
 
-  // 키별 타입은 defaults의 값 타입으로 정한다: 문자열 키는 절대경로 문자열만, 불리언 키는 불리언만.
-  function validKey(key, value) {
-    const def = defaults[key];
+  // 스칼라 키 타입은 defaults의 값 타입으로 정한다: 문자열 키는 절대경로 문자열만, 불리언 키는 불리언만.
+  function validScalar(def, value) {
     if (typeof def === 'boolean') return typeof value === 'boolean';
     if (typeof def === 'string') return typeof value === 'string' && path.isAbsolute(value);
     return false;
+  }
+
+  // object 키(예: shortcuts) 병합: def의 하위 키만 채택하고 각 하위값이 문자열일 때만 반영한다
+  // (빈 문자열 허용 = 단축키 없음). 알 수 없는 하위 키는 무시. base(현재 병합값) 위에 incoming을 덮어쓴다.
+  function mergeObject(def, base, incoming) {
+    const out = { ...def, ...(isPlainObject(base) ? base : {}) };
+    if (isPlainObject(incoming)) {
+      for (const sub of Object.keys(def)) {
+        if (sub in incoming && typeof incoming[sub] === 'string') out[sub] = incoming[sub];
+      }
+    }
+    return out;
   }
 
   function readRaw() {
@@ -30,7 +43,12 @@ function createSettingsStore(filePath, defaults) {
     const raw = readRaw();
     const out = { ...defaults };
     for (const key of keys) {
-      if (key in raw && validKey(key, raw[key])) out[key] = raw[key];
+      const def = defaults[key];
+      if (isPlainObject(def)) {
+        out[key] = mergeObject(def, {}, raw[key]); // defaults에서 시작해 raw의 유효 하위키만 덮어쓴다
+      } else if (key in raw && validScalar(def, raw[key])) {
+        out[key] = raw[key];
+      }
     }
     return out;
   }
@@ -38,7 +56,12 @@ function createSettingsStore(filePath, defaults) {
   function set(patch) {
     const next = get();
     for (const key of keys) {
-      if (patch && key in patch && validKey(key, patch[key])) next[key] = patch[key];
+      const def = defaults[key];
+      if (isPlainObject(def)) {
+        if (patch && key in patch) next[key] = mergeObject(def, next[key], patch[key]); // 부분 patch 허용
+      } else if (patch && key in patch && validScalar(def, patch[key])) {
+        next[key] = patch[key];
+      }
     }
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const tmp = `${filePath}.tmp`;

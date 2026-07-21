@@ -7,6 +7,7 @@ import { setStatus } from './toolbar.js';
 import { setupDnd } from './dnd.js';
 import { createDualView } from './pdfDualView.js';
 import { createMdToc } from './mdToc.js';
+import { normalizeEvent, hasModifier, format as fmtShortcut, isReserved, ACTIONS } from './shortcuts.js';
 
 const $ = (id) => document.getElementById(id);
 const isPdf = (p) => /\.pdf$/i.test(p || '');
@@ -105,7 +106,9 @@ function renderPdfStatus(st) {
   $('pdf-total').textContent = String(Math.max(st.left.count, st.right.count));
   $('pdf-page').value = String(st.left.page || st.right.page || 1);
   $('btn-sync').textContent = 'Sync: ' + (st.sync ? 'ON' : 'OFF');
+  $('btn-sync').classList.toggle('on', !!st.sync);
   $('btn-fit').textContent = 'Fit: ' + (st.fit ? 'ON' : 'OFF');
+  $('btn-fit').classList.toggle('on', !!st.fit);
   $('btn-toc').textContent = 'TOC' + (st.outline ? ' ✓' : '');
   $('pdf-status').textContent = `L ${st.left.page}/${st.left.count}   R ${st.right.page}/${st.right.count}   ${Math.round(st.scale * 100)}%`;
   $('btn-back').disabled = !st.canBack;
@@ -260,7 +263,10 @@ let lastSent = '';               // 직전에 보낸 선택 텍스트 — 같은
 let accessibilityWarned = false; // 접근성 권한 안내는 세션당 1회만(매 선택 반복 금지)
 let dictExternalCalls = 0;       // e2e 훅용 — external() 실제 호출 횟수(중복 전송 방지 이후에만 증가)
 
-function updateDictBtn() { $('btn-dict').textContent = 'Dict: ' + (dictOn ? 'ON' : 'OFF'); }
+function updateDictBtn() {
+  $('btn-dict').textContent = 'Dict: ' + (dictOn ? 'ON' : 'OFF');
+  $('btn-dict').classList.toggle('on', dictOn); // ON일 때 버튼 강조
+}
 // 선택 해제·모드 전환·Dict OFF 시 — 팝업이 없으므로 중복 전송 기준(lastSent)만 리셋한다.
 function resetDict() {
   clearTimeout(dictSelTimer);
@@ -393,6 +399,45 @@ $('btn-toc').onclick = () => {
 };
 $('btn-dict').onclick = () => toggleDict();
 
+// ===== 커스텀 토글 단축키 =====
+// shortcuts는 액션(dict/fit/sync/night/switch)→표현문자열 맵. 시작 시 설정에서 로드하고,
+// 설정창에서 바꾸면 즉시 갱신한다(현재 창 한정 — 다른 창은 다음 openSettings/재시작 시 반영).
+let shortcuts = { dict: 'Cmd+D', fit: 'Alt+F', sync: 'Alt+S', night: 'Alt+N', switch: 'Alt+ArrowRight' };
+let settingsCapture = null; // 설정창에서 키 입력 대기 중인 액션 id(없으면 null)
+async function loadShortcuts() {
+  try {
+    const s = await window.wcompare.settings.get();
+    if (s && s.shortcuts) shortcuts = { ...shortcuts, ...s.shortcuts };
+  } catch { /* 로드 실패 시 기본값 유지 */ }
+}
+// 액션 실행. PDF 전용(fit/sync/switch)은 dualView 존재·pdf 모드 가드를 지킨다(없으면 무시).
+function runShortcutAction(id) {
+  switch (id) {
+    case 'dict': toggleDict(); break;
+    case 'night': toggleNight(); break;
+    case 'fit': if (dualView && mode === 'pdf') dualView.setFit(!dualView.isFit()); break;
+    case 'sync': if (dualView && mode === 'pdf') dualView.setSync(!dualView.isSync()); break;
+    case 'switch': if (dualView && mode === 'pdf') switchSides(); break;
+  }
+}
+// 커스텀 단축키를 기존 keydown(find/zoom/back-forward)보다 "먼저" 매칭한다 → capture 단계에 등록.
+// 입력 필드(찾기/이름/설정 input, Monaco 내부 textarea 포함)에 포커스가 있으면 텍스트 입력을 방해하지 않도록 skip.
+window.addEventListener('keydown', (e) => {
+  if (settingsCapture) return; // 설정창에서 키 캡처 중이면 여기서 발동 금지(캡처 핸들러가 처리)
+  const tag = e.target && e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
+  const str = normalizeEvent(e);
+  if (!str) return;
+  for (const id of Object.keys(shortcuts)) {
+    if (shortcuts[id] && shortcuts[id] === str) {
+      e.preventDefault();
+      e.stopImmediatePropagation(); // 뒤따르는 기존 keydown 리스너가 같은 키를 또 처리하지 않게
+      runShortcutAction(id);
+      return;
+    }
+  }
+}, true);
+
 // ===== 설정 다이얼로그 wiring (요소는 항상 존재하므로 한 번만 건다) =====
 $('set-archive-pdf').onchange = (e) => window.wcompare.settings.set({ archivePdfOnOpen: e.target.checked });
 $('set-keep-translations').onchange = (e) => window.wcompare.settings.set({ keepTranslationsInStorage: e.target.checked });
@@ -400,7 +445,68 @@ $('set-storage-change').onclick = async () => {
   const s = await window.wcompare.settings.pickStorageDir(); // main dialog, 취소 시 null
   if (s) $('set-storage-path').value = s.storageDir;
 };
-$('settings-close').onclick = () => $('settings-dialog').close();
+$('settings-close').onclick = () => { endShortcutCapture(); $('settings-dialog').close(); };
+
+// ===== 설정창: 토글 단축키 UI =====
+// ACTIONS 순서대로 행을 만든다: 라벨 + readonly 표시 input + "변경" 버튼 + 경고 span.
+function buildShortcutRows() {
+  const host = $('shortcut-rows');
+  if (!host || host.childElementCount) return; // 한 번만 만든다
+  for (const { id, label } of ACTIONS) {
+    const row = document.createElement('div');
+    row.className = 'sc-row';
+    row.dataset.action = id;
+    const lab = document.createElement('span'); lab.className = 'sc-label'; lab.textContent = label;
+    const key = document.createElement('input'); key.className = 'sc-key'; key.readOnly = true; key.dataset.role = 'key';
+    const btn = document.createElement('button'); btn.textContent = '변경'; btn.dataset.role = 'change';
+    const warn = document.createElement('span'); warn.className = 'sc-warn'; warn.dataset.role = 'warn';
+    row.append(lab, key, btn, warn);
+    host.appendChild(row);
+    const start = () => startShortcutCapture(id); // 변경 클릭 또는 input 포커스 시 캡처 시작
+    btn.addEventListener('click', start);
+    key.addEventListener('focus', start);
+  }
+}
+const shortcutRow = (id) => $('shortcut-rows').querySelector(`.sc-row[data-action="${id}"]`);
+function renderShortcutRow(id) {
+  const row = shortcutRow(id); if (!row) return;
+  const str = shortcuts[id] || '';
+  row.querySelector('[data-role=key]').value = str ? fmtShortcut(str) : '(없음)';
+  const res = isReserved(str);
+  row.querySelector('[data-role=warn]').textContent = res ? `⚠ 이미 '${res}'에 사용 중` : '';
+}
+function renderAllShortcutRows() { for (const { id } of ACTIONS) renderShortcutRow(id); }
+function startShortcutCapture(id) {
+  if (settingsCapture) endShortcutCapture(); // 다른 행이 대기 중이면 먼저 취소
+  settingsCapture = id;
+  const key = shortcutRow(id)?.querySelector('[data-role=key]');
+  if (key) { key.classList.add('capturing'); key.value = '키 입력 대기…'; }
+}
+function endShortcutCapture() {
+  const id = settingsCapture;
+  settingsCapture = null;
+  if (!id) return;
+  shortcutRow(id)?.querySelector('[data-role=key]')?.classList.remove('capturing');
+  renderShortcutRow(id); // 대기 표시를 원래 값으로 되돌린다
+}
+function saveShortcuts() { window.wcompare.settings.set({ shortcuts }).catch(() => {}); }
+// 캡처 keydown — document capture 단계로 등록. window(capture)의 발동 핸들러는 settingsCapture 중엔 skip하므로
+// 이 핸들러가 키를 잡는다. modifier 최소 1개 필요, Escape는 취소.
+document.addEventListener('keydown', (e) => {
+  if (!settingsCapture) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (e.key === 'Escape') { endShortcutCapture(); return; }
+  const str = normalizeEvent(e);
+  if (!str || !hasModifier(str)) return; // modifier 없는 단일 키/단독 modifier는 무시하고 계속 대기
+  const id = settingsCapture;
+  shortcuts[id] = str;
+  settingsCapture = null;
+  shortcutRow(id)?.querySelector('[data-role=key]')?.classList.remove('capturing');
+  renderShortcutRow(id);
+  saveShortcuts(); // 즉시 저장 + 현재 창 반영(shortcuts 변수는 이미 갱신됨)
+}, true);
+buildShortcutRows();
 
 // ===== PDF 야간 모드 =====
 // 페이지 canvas만 CSS 필터로 반전한다(index.html). Monaco 테마(btn-theme)와는 독립 —
@@ -410,6 +516,7 @@ try { night = localStorage.getItem('wc-night') === '1'; } catch { /* 스토리�
 function applyNight() {
   $('pdfview').classList.toggle('night', night);
   $('btn-night').textContent = 'Night: ' + (night ? 'ON' : 'OFF');
+  $('btn-night').classList.toggle('on', night); // ON일 때 버튼 강조
 }
 function toggleNight() {
   night = !night;
@@ -581,6 +688,8 @@ async function openSettings() {
   $('set-storage-path').value = s.storageDir;
   $('set-archive-pdf').checked = !!s.archivePdfOnOpen;
   $('set-keep-translations').checked = !!s.keepTranslationsInStorage;
+  if (s.shortcuts) shortcuts = { ...shortcuts, ...s.shortcuts }; // 저장된 값으로 현재 창 갱신
+  renderAllShortcutRows();
   $('settings-dialog').showModal();
 }
 
@@ -641,6 +750,7 @@ window.wcompare.onOpenPair(async ({ left, right }) => {
 updateDictBtn();
 setMode('diff');
 refreshStatus();
+loadShortcuts(); // 저장된 커스텀 단축키를 로드(비동기 — 실패 시 기본값 유지)
 
 // e2e 테스트 훅 — 렌더러 내부 상태를 읽기 전용으로 노출한다(외부 네트워크·경로 생성과 무관).
-window.__wc = { editorApi, getMode: () => mode, isMdTocOpen: () => mdTocOpen, isDictOn: () => dictOn, dictCalls: () => dictExternalCalls };
+window.__wc = { editorApi, getMode: () => mode, isMdTocOpen: () => mdTocOpen, isDictOn: () => dictOn, dictCalls: () => dictExternalCalls, getShortcuts: () => ({ ...shortcuts }), isNight: () => night };

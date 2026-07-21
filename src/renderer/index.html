@@ -12,6 +12,9 @@
   #toolbar button { background: #333; color: #ddd; border: 1px solid #555; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
   #toolbar button:hover { background: #444; }
   #toolbar button:disabled { opacity: 0.4; cursor: default; background: #333; }
+  /* 토글이 ON일 때 버튼 강조 (Dict/Fit/Sync/Night). Switch는 액션이라 ON 개념이 없어 제외. */
+  #toolbar button.on { background:#0a84ff; border-color:#0a84ff; color:#fff; }
+  #toolbar button.on:hover { background:#3d9bff; }
   #toolbar input { background:#222; color:#ddd; border:1px solid #555; border-radius:4px; }
   #diff-controls, #pdf-controls { display:flex; align-items:center; gap:6px; color:#bbb; }
   #pdf-find-count { min-width:104px; font:11px monospace; color:#9cdcfe; }
@@ -107,6 +110,14 @@
   dialog input[type=text] { background:#222; color:#ddd; border:1px solid #555; border-radius:4px; padding:4px 6px; }
   dialog button { background:#333; color:#ddd; border:1px solid #555; border-radius:4px; padding:3px 10px; cursor:pointer; margin-left:6px; }
   dialog button:hover { background:#444; }
+
+  /* 설정창 단축키 섹션 */
+  .sc-row { display:flex; align-items:center; gap:8px; margin:5px 0; }
+  .sc-row .sc-label { flex:0 0 150px; color:#ccc; }
+  .sc-row .sc-key { flex:0 0 96px; background:#222; color:#ddd; border:1px solid #555; border-radius:4px;
+    padding:4px 6px; text-align:center; font:13px sans-serif; cursor:pointer; }
+  .sc-row .sc-key.capturing { border-color:#0a84ff; color:#9cdcfe; }
+  .sc-row .sc-warn { color:#e0a030; font-size:11px; }
 </style>
 </head>
 <body>
@@ -171,6 +182,12 @@
     </div>
     <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-archive-pdf" /> PDF를 열 때 보관 폴더에 사본 저장</label>
     <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-keep-translations" /> 번역본을 보관 폴더에 저장</label>
+
+    <div style="margin-top:12px; border-top:1px solid #444; padding-top:10px;">
+      <div style="color:#999; font-size:11px; margin-bottom:6px;">토글 단축키 (변경을 누르고 원하는 키 조합을 누르세요 · Esc 취소)</div>
+      <div id="shortcut-rows"></div>
+    </div>
+
     <div style="margin-top:10px; text-align:right;"><button id="settings-close">닫기</button></div>
   </dialog>
 

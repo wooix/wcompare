@@ -10,6 +10,7 @@ const DEFAULTS = {
   storageDir: path.join(os.homedir(), '.local', 'wcompare'),
   archivePdfOnOpen: false,
   keepTranslationsInStorage: false,
+  shortcuts: { dict: 'Cmd+D', fit: 'Alt+F', sync: 'Alt+S', night: 'Alt+N', switch: 'Alt+ArrowRight' },
 };
 
 const store = (name = 'settings.json') =>
@@ -67,6 +68,52 @@ test('깨진 JSON에서도 죽지 않고 defaults를 돌려준다', () => {
   assert.deepEqual(s.get(), DEFAULTS, '조용히 기본값으로 복구');
   const after = s.set({ archivePdfOnOpen: true });
   assert.equal(after.archivePdfOnOpen, true, '그 뒤로는 정상 동작');
+});
+
+// ===== shortcuts (object 타입 키) =====
+test('shortcuts: 부분 patch는 나머지 액션을 보존한다', () => {
+  const s = store();
+  const after = s.set({ shortcuts: { fit: 'Cmd+F' } });
+  assert.equal(after.shortcuts.fit, 'Cmd+F', '준 값은 반영');
+  assert.equal(after.shortcuts.dict, 'Cmd+D', '안 준 액션은 기본값 보존');
+  assert.equal(after.shortcuts.switch, 'Alt+ArrowRight');
+  assert.deepEqual(s.get().shortcuts, after.shortcuts, '다시 읽어도 같다');
+});
+
+test('shortcuts: 두 번의 부분 patch가 누적된다', () => {
+  const s = store();
+  s.set({ shortcuts: { fit: 'Cmd+F' } });
+  const after = s.set({ shortcuts: { sync: 'Cmd+S' } });
+  assert.equal(after.shortcuts.fit, 'Cmd+F', '이전 patch 유지');
+  assert.equal(after.shortcuts.sync, 'Cmd+S');
+});
+
+test('shortcuts: 알 수 없는 하위 키는 무시한다', () => {
+  const s = store();
+  const after = s.set({ shortcuts: { hacker: 'Cmd+X', dict: 'Cmd+K' } });
+  assert.equal(after.shortcuts.hacker, undefined, '허용 목록에 없는 하위 키는 버린다');
+  assert.equal(after.shortcuts.dict, 'Cmd+K');
+  assert.deepEqual(Object.keys(after.shortcuts).sort(), Object.keys(DEFAULTS.shortcuts).sort());
+});
+
+test('shortcuts: 비문자열 하위값은 거부하고 기존값을 유지한다', () => {
+  const s = store();
+  const after = s.set({ shortcuts: { dict: 123, fit: null, sync: 'Alt+X' } });
+  assert.equal(after.shortcuts.dict, 'Cmd+D', '숫자는 거부');
+  assert.equal(after.shortcuts.fit, 'Alt+F', 'null은 거부');
+  assert.equal(after.shortcuts.sync, 'Alt+X', '문자열은 통과');
+});
+
+test('shortcuts: 빈 문자열은 허용한다(단축키 없음)', () => {
+  const s = store();
+  const after = s.set({ shortcuts: { dict: '' } });
+  assert.equal(after.shortcuts.dict, '', '빈 문자열 = 단축키 해제');
+});
+
+test('shortcuts: shortcuts가 object가 아니면 무시한다', () => {
+  const s = store();
+  const after = s.set({ shortcuts: 'not-an-object' });
+  assert.deepEqual(after.shortcuts, DEFAULTS.shortcuts, '문자열 patch는 기본값 유지');
 });
 
 test('원자 기록: 임시파일을 남기지 않고 파일 하나만 만든다', () => {
