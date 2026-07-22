@@ -259,3 +259,71 @@ test('보관 폴더 밖(레거시) 프로젝트 저장은 이름 모달로 보�
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// 안전장치: 보관 폴더 안 프로젝트라도 파일 쌍이 바뀌면(= 사실상 다른 프로젝트) 조용히 덮어쓰지 않는다.
+// 왼쪽 파일을 닫아 (a,b)→(null,b)로 쌍을 바꾼 뒤 저장 → 이름 모달이 뜨고 기존 p.wcproj는 그대로여야 한다.
+test('파일 쌍이 바뀌면 조용히 재저장하지 않고 이름 모달을 띄우며 기존 .wcproj는 그대로다', async () => {
+  const { dir, a, b, proj, storageDir, userData } = setup('pairchg');
+  const app = await launch([a, b], userData);
+  const win = await app.firstWindow();
+  await win.waitForSelector(`${L} .pdf-container canvas`, { timeout: 20000 });
+  await win.waitForSelector(`${R} .pdf-container canvas`, { timeout: 20000 });
+  await setStorage(app, storageDir);
+
+  // 1) 보관 폴더에 (a,b) 쌍으로 최초 저장
+  await saveViaModal(app, win, 'p');
+  await expect.poll(() => fs.existsSync(proj), { timeout: 10000 }).toBe(true);
+  const before = fs.readFileSync(proj, 'utf8');
+  const beforeJson = JSON.parse(before);
+  expect(beforeJson.files.left).not.toBeNull();
+  expect(beforeJson.files.right).not.toBeNull();
+
+  // 2) 왼쪽 파일을 닫아 쌍을 (null, b)로 바꾼다
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('menu:close-left'));
+  await expect(win.locator('.pdf-pane[data-side=left].loaded')).toHaveCount(0, { timeout: 10000 });
+
+  // 3) 저장 → 조용히 덮어쓰지 않고 이름 모달이 떠야 한다
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('menu:project-save'));
+  await win.waitForSelector('#project-name-dialog[open]', { timeout: 10000 });
+
+  // 4) 기존 p.wcproj는 손대지 않았다(여전히 a,b를 가리킨다) — 조용한 덮어쓰기가 없었음을 증명
+  expect(fs.readFileSync(proj, 'utf8')).toBe(before);
+  expect(fs.existsSync(`${proj}.bak`)).toBe(false); // 백업조차 만들지 않았다
+
+  await win.keyboard.press('Escape'); // 모달 취소
+  await app.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// 덮어쓰기 확인을 취소(WCOMPARE_TEST_CONFIRM=cancel)하면 기존 파일을 덮어쓰지 않는다.
+test('덮어쓰기 확인 취소 시 기존 프로젝트 파일을 덮어쓰지 않는다', async () => {
+  const { dir, a, b, storageDir, userData } = setup('confirm-cancel');
+  // 다른 이름(occupied)의 프로젝트가 이미 보관 폴더에 있다고 가정하고 미리 만들어 둔다.
+  const occupied = path.join(storageDir, 'projects', 'occupied.wcproj');
+  fs.mkdirSync(path.dirname(occupied), { recursive: true });
+  fs.writeFileSync(occupied, 'SENTINEL'); // 덮어써지면 이 내용이 바뀐다
+
+  // 다이얼로그가 이벤트 루프를 막지 않도록 테스트 심으로 '취소'를 강제한다.
+  const app = await electron.launch({
+    args: [MAIN, `--user-data-dir=${userData}`, a, b],
+    env: { ...process.env, WCOMPARE_TEST_CONFIRM: 'cancel' },
+  });
+  const win = await app.firstWindow();
+  await win.waitForSelector(`${L} .pdf-container canvas`, { timeout: 20000 });
+  await win.waitForSelector(`${R} .pdf-container canvas`, { timeout: 20000 });
+  await setStorage(app, storageDir);
+
+  // "다른 이름으로 저장" → 이름 모달에 기존 이름(occupied)을 입력 → 덮어쓰기 확인이 뜨지만 취소된다
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('menu:project-save-as'));
+  await win.waitForSelector('#project-name-dialog[open]', { timeout: 10000 });
+  await win.fill('#project-name-input', 'occupied');
+  await win.click('#project-name-ok');
+
+  // 취소되었으므로: 파일 내용 불변 + 백업도 없음 + 모달은 닫힘
+  await expect(win.locator('#project-name-dialog[open]')).toHaveCount(0, { timeout: 10000 });
+  expect(fs.readFileSync(occupied, 'utf8')).toBe('SENTINEL');
+  expect(fs.existsSync(`${occupied}.bak`)).toBe(false);
+
+  await app.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});

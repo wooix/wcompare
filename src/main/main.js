@@ -27,9 +27,10 @@ function createWindow(pair = { left: null, right: null }) {
     if (pair.right) allowPath(pair.right);
     win.webContents.send('open-pair', pair);
   });
-  // 창이 닫히면 그 창의 번역만 취소한다(다른 창의 진행 중 번역은 건드리지 않는다).
+  // 창이 닫히면 그 창의 번역만 취소하고, 그 창의 현재 프로젝트 항목도 정리한다
+  // (다른 창의 진행 중 번역·현재 프로젝트는 건드리지 않는다).
   const wc = win.webContents;
-  wc.on('destroyed', () => cancelForWebContents(wc.id));
+  wc.on('destroyed', () => { cancelForWebContents(wc.id); project.forget(wc.id); });
 }
 
 app.on('web-contents-created', (_e, contents) => {

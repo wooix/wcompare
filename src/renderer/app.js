@@ -647,11 +647,13 @@ async function saveProject(as = false) {
     const snap = projectSnapshot();
     if (!snap.files.left && !snap.files.right) { alert('저장할 파일이 없습니다.'); return; }
     let res = as ? await window.wcompare.project.saveAs(snap) : await window.wcompare.project.save(snap);
-    if (res?.needName) {
+    // 이름이 필요하면 모달로 받아 다시 저장. 정화 후 빈 이름 등으로 다시 needName이 오면 한 번 더 묻는다.
+    while (res?.needName) {
       const name = await promptProjectName(res.suggest); // 취소 시 null
       if (!name) return;
       res = await window.wcompare.project.save(snap, name);
     }
+    if (res?.canceled) return; // 덮어쓰기 취소 — 조용히 중단(기존 상태 유지)
     if (res?.path) setStatus(`프로젝트 저장됨: ${res.display || res.path}`);
   } catch (e) {
     alert('프로젝트 저장 실패: ' + (e?.message || e));

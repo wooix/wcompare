@@ -6,23 +6,33 @@ const { app, dialog, BrowserWindow } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { serialize, parse, MAX_BYTES } = require('./projectFile.js');
+const { serialize, parse, MAX_BYTES, FORMAT } = require('./projectFile.js');
 const { createRecents } = require('./recentProjects.js');
 const { allowed, allowPath, normalize } = require('./allowlist.js');
+const { decide, writeProjectFile } = require('./projectSaveDecision.js');
 const settings = require('./settings.js');
 
 const EXT = 'wcproj';
 let recents = null;
 let onChange = () => {};
-let currentPath = null; // 현재 열린/저장된 프로젝트
+// 현재 열린/저장된 프로젝트를 "창(webContents.id)별"로 보관한다.
+// 모듈 전역 하나면 창A가 연 프로젝트가 창B의 저장 대상까지 바꿔 버린다(창 간 오염).
+const currentPaths = new Map(); // wcId → 프로젝트 경로
 
 const store = () => (recents ||= createRecents(path.join(app.getPath('userData'), 'recent-projects.json')));
 
-// file이 dir 하위(또는 같음)인지. path.relative가 ..로 시작하지 않으면 하위.
-// ipc.js의 isInside와 동일한 로직(순환 require 방지를 위해 각 모듈에 지역 복사).
-function isInside(dir, file) {
-  const rel = path.relative(dir, path.resolve(file));
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+const wcIdOf = (win) => win?.webContents?.id ?? null;
+
+// 창이 파괴될 때 그 창의 현재 프로젝트 항목을 정리한다(main.js의 destroyed 훅에서 호출).
+function forget(wcId) { currentPaths.delete(wcId); }
+
+// cur 파일에 기록된 좌/우 파일 쌍(abs)만 가볍게 읽는다 — "같은 프로젝트인가" 판정용.
+// parse는 rel 우선 해석이라 파일이 옮겨졌으면 다른 경로를 돌려줄 수 있어, 저장 당시의 abs를 그대로 본다.
+// 읽기 실패(삭제·손상·비-wcproj)면 throw → 판정 모듈이 needName으로 떨어뜨린다.
+function readPair(projectPath) {
+  const raw = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
+  if (raw?.format !== FORMAT) throw new Error('wcompare 프로젝트 파일이 아닙니다');
+  return { left: raw.files?.left?.abs ?? null, right: raw.files?.right?.abs ?? null };
 }
 
 // 상태줄 표기용: 홈 디렉터리 접두사를 ~로 축약한다(전체 경로를 보여주되 짧게).
@@ -61,7 +71,7 @@ function loadFrom(win, projectPath) {
     payload.files[side] = allowPath(f.path);
   }
 
-  currentPath = projectPath;
+  currentPaths.set(wcIdOf(win), projectPath); // 이 창의 현재 프로젝트만 갱신
   store().add(projectPath);
   onChange();
   sendWhenReady(win, 'project:load', payload);
@@ -104,39 +114,51 @@ function assertOwned(snapshot) {
   }
 }
 
-// 저장 대상 경로는 렌더러가 정하지 않는다: 이름 문자열만 받아 main이 storageDir/projects 하위로 유도한다.
-// eslint-disable-next-line require-await -- 인터페이스 호환(렌더러는 await로 호출)
+// 덮어쓰기 확인. 실제로는 main이 dialog를 띄우지만, e2e에서 다이얼로그가 이벤트 루프를 막지 않도록
+// WCOMPARE_TEST_CONFIRM('overwrite'|'cancel')이 설정되면 다이얼로그 대신 그 값을 쓴다
+// (ipc.js의 WCOMPARE_DICT_FAKE와 동일한 테스트 심).
+async function confirmOverwrite(win, target) {
+  const forced = process.env.WCOMPARE_TEST_CONFIRM;
+  if (forced === 'overwrite') return true;
+  if (forced === 'cancel') return false;
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    message: '이미 같은 이름의 프로젝트가 있습니다',
+    detail: `"${path.basename(target)}"을(를) 덮어쓸까요? 기존 내용은 사라집니다.`,
+    buttons: ['덮어쓰기', '취소'],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  return response === 0;
+}
+
+// 판정(재저장/needName/confirm/거부)은 순수 모듈(projectSaveDecision)에 있다.
+// 여기서는 그 계획을 받아 dialog·fs 기록만 수행한다.
 async function save(win, snapshot, { saveAs = false, name } = {}) {
   assertOwned(snapshot);
 
   const projectsDir = settings.dirFor('projects');
-  let target;
-  if (typeof name === 'string') {
-    // 렌더러 이름 모달에서 받은 프로젝트 이름. 경로 구분자·상위 이동(/, \, :)을 막는다.
-    if (!/^[^/\\:]{1,80}$/.test(name)) throw new Error('사용할 수 없는 프로젝트 이름입니다');
-    target = path.join(projectsDir, `${name}.${EXT}`);
-  } else if (!saveAs && currentPath && isInside(normalize(projectsDir), normalize(currentPath))) {
-    // 보관 폴더(storageDir/projects) 하위일 때만 조용히 재저장.
-    // 레거시 위치(보관 폴더 밖)에 조용히 재저장하면 상태 표시가 파일명만 보여줘
-    // 사용자는 보관 폴더에 저장된 걸로 오인한다(실사용 버그) → 아래로 떨어져 이름 모달을 거친다.
-    // realpath 차이(/tmp→/private/tmp 등)로 오판하지 않도록 양쪽 모두 normalize 후 비교.
-    target = currentPath;
-  } else {
-    // 처음 저장이거나 "다른 이름으로 저장"이거나 레거시 위치의 프로젝트 →
-    // 렌더러가 이름 모달을 띄우고 name과 함께 다시 부른다(보관 폴더로 유도).
-    const suggest = currentPath
-      ? path.basename(currentPath, `.${EXT}`)
-      : (snapshot?.files?.left ? path.basename(snapshot.files.left, path.extname(snapshot.files.left)) : 'untitled');
-    return { needName: true, suggest };
+  const wcId = wcIdOf(win);
+  const curPath = currentPaths.get(wcId) || null;
+
+  const plan = decide(
+    { name, saveAs, curPath, snapshot, projectsDir, ext: EXT },
+    { exists: fs.existsSync, readPair, norm: normalize },
+  );
+
+  if (plan.action === 'needName') return { needName: true, suggest: plan.suggest };
+
+  let { target, backup } = plan;
+  if (plan.action === 'confirm') {
+    if (!(await confirmOverwrite(win, target))) return { canceled: true };
+    backup = true; // 확인을 받아 덮어쓰므로 반드시 백업을 남긴다
   }
 
-  fs.writeFileSync(target, serialize(snapshot, target));
-  currentPath = target;
+  writeProjectFile(target, serialize(snapshot, target), { backup });
+  currentPaths.set(wcId, target); // 이 창의 현재 프로젝트만 갱신
   store().add(target);
   onChange();
   return { ok: true, path: target, display: displayPath(target) };
 }
 
-const currentProject = () => currentPath;
-
-module.exports = { open, openRecent, save, list, clearRecents, setOnChange, currentProject, EXT };
+module.exports = { open, openRecent, save, list, clearRecents, setOnChange, forget, EXT };
