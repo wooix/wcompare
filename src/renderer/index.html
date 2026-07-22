@@ -1,0 +1,219 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'" />
+<link rel="stylesheet" href="./app.css" />
+<link rel="stylesheet" href="./pdf_viewer.css" />
+<style>
+  html, body { margin: 0; height: 100%; background:#1e1e1e; }
+  #toolbar { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: #1e1e1e; color: #ddd; font: 13px sans-serif; }
+  #toolbar button { background: #333; color: #ddd; border: 1px solid #555; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+  #toolbar button:hover { background: #444; }
+  #toolbar button:disabled { opacity: 0.4; cursor: default; background: #333; }
+  /* 토글이 ON일 때 버튼 강조 (Dict/Fit/Sync/Night). Switch는 액션이라 ON 개념이 없어 제외. */
+  #toolbar button.on { background:#0a84ff; border-color:#0a84ff; color:#fff; }
+  #toolbar button.on:hover { background:#3d9bff; }
+  #toolbar input { background:#222; color:#ddd; border:1px solid #555; border-radius:4px; }
+  #diff-controls, #pdf-controls { display:flex; align-items:center; gap:6px; color:#bbb; }
+  #pdf-find-count { min-width:104px; font:11px monospace; color:#9cdcfe; }
+  #pdf-find-count.miss { color:#f48771; }
+  #diff-wrap, #pdfview { height: calc(100% - 36px - 22px); }
+  #diff-wrap { display:flex; }
+  #editor { flex:1; min-width:0; height:100%; }
+  #pdfview { display:none; }
+  .pdf-pane { flex:1; position:relative; min-width:0; border-right:1px solid #333; display:flex; }
+  .pdf-pane:last-child { border-right:none; }
+
+  /* Markdown TOC 드로어 — #diff-wrap의 좌/우 flex 자식. DOM 순서(left, editor, right)로
+     오른쪽 드로어가 창의 오른쪽 끝에 온다. 표시/숨김은 .show 클래스로 제어.
+     Monaco는 automaticLayout:true라 드로어 폭 변화에 스스로 재배치된다. */
+  .md-toc { flex:0 0 200px; display:none; overflow:auto; background:#242424; color:#ccc;
+    font:12px sans-serif; padding:4px; }
+  .md-toc.show { display:block; }
+  #md-toc-left { border-right:1px solid #333; }
+  #md-toc-right { border-left:1px solid #333; }
+  .pdf-viewer-host { flex:1; position:relative; min-width:0; }
+  .pdf-container { position:absolute; inset:0; overflow:auto; background:#2a2a2a; }
+
+  /* 목차(TOC) 드로어 — 뷰어를 겹치지 않고 flex 2열로 밀어낸다(겹치면 page-width 왼쪽이 가려짐).
+     열고 닫을 때 dualView가 applyFit으로 폭을 재계산한다. */
+  .pdf-outline { flex:0 0 200px; display:none; overflow:auto; background:#242424;
+    border-right:1px solid #333; color:#ccc; font:12px sans-serif; padding:4px; }
+  .pdf-pane.outline-open .pdf-outline { display:block; }
+  /* 오른쪽 pane에서는 목차 드로어를 뷰어 오른쪽(창의 오른쪽 끝)에 붙인다.
+     flex 자식 기본 order 0 → outline만 order:1이면 viewer-host 뒤로 밀린다.
+     .pdf-close/.pdf-busy는 absolute라 order 영향을 받지 않는다. */
+  .pdf-pane:last-child .pdf-outline { order:1; border-right:none; border-left:1px solid #333; }
+  .toc-item { display:flex; align-items:center; gap:2px; padding:2px 4px; border-radius:3px;
+    cursor:pointer; white-space:nowrap; }
+  .toc-item:hover { background:#333; }
+  .toc-item.disabled { color:#666; cursor:default; }
+  .toc-title { overflow:hidden; text-overflow:ellipsis; }
+  .toc-toggle { flex:0 0 12px; color:#888; text-align:center; }
+  .toc-kids { margin-left:12px; }
+  .toc-kids.collapsed { display:none; }
+  .toc-empty { color:#666; padding:6px 4px; }
+
+  /* PDF 야간 모드 — 페이지 canvas만 반전한다. 마커/펄스는 canvas의 형제 레이어라 원색 유지. */
+  #pdfview.night .pdf-container { background:#161616;
+    /* 반전된 어두운 캔버스 위 검색 하이라이트 대비 보정 (pdf.js CSS 변수) */
+    --highlight-bg-color: rgba(64, 200, 255, 0.45);
+    --highlight-selected-bg-color: rgba(255, 170, 0, 0.6); }
+  #pdfview.night .pdfViewer .page canvas { filter: invert(0.9) hue-rotate(180deg); }
+  /* multiply 형광펜은 어두운 캔버스에서 안 보인다 → 야간에는 screen으로 보정 */
+  #pdfview.night .wc-mark-highlight { mix-blend-mode: screen; }
+
+  /* 미러 점프 도착 지점 펄스 (1.5초 일회성) */
+  .wc-pulse { position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px; border-radius:50%;
+    background:#9cdcfe; pointer-events:none; z-index:4; animation: wc-pulse 1.5s ease-out forwards; }
+  @keyframes wc-pulse {
+    0% { box-shadow:0 0 0 0 rgba(156,220,254,.85); opacity:.95; }
+    100% { box-shadow:0 0 0 44px rgba(156,220,254,0); opacity:0; } }
+  /* 마커(형광펜/밑줄). 페이지 div의 마지막 자식으로 붙고, 좌표는 % 라 줌/리사이즈를 CSS가 따라간다.
+     pointer-events:none 이라 텍스트 선택·링크 클릭을 가로막지 않는다. */
+  .wc-marker-layer { position:absolute; inset:0; pointer-events:none; z-index:3; }
+  .wc-mark { position:absolute; }
+  .wc-mark-highlight { mix-blend-mode:multiply; border-radius:2px; } /* 글자가 비쳐 보이게 */
+  .wc-mark-underline { box-shadow: inset 0 -2px 0 currentColor; }
+
+  /* pane 우상단 닫기 버튼 — 문서가 로드된 pane에만 보인다 */
+  .pdf-close { display:none; position:absolute; top:6px; right:14px; z-index:4;
+    width:22px; height:22px; padding:0; line-height:1; border-radius:50%;
+    background:#333c; color:#bbb; border:1px solid #555; cursor:pointer; font:12px sans-serif; }
+  .pdf-pane.loaded .pdf-close { display:block; }
+  .pdf-close:hover { background:#a33; color:#fff; }
+
+  /* 오래 걸리는 작업(번역)을 해당 pane 위에 겹쳐 표시 */
+  .pdf-busy { position:absolute; inset:0; z-index:5; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:8px; background:#2a2a2ae6;
+    color:#ddd; font:13px sans-serif; text-align:center; padding:16px; }
+  .pdf-busy-spin { width:26px; height:26px; border:3px solid #555; border-top-color:#9cdcfe;
+    border-radius:50%; animation:pdf-spin 0.9s linear infinite; }
+  @keyframes pdf-spin { to { transform:rotate(360deg); } }
+  .pdf-busy-title { font-size:14px; color:#fff; }
+  .pdf-busy-sub { color:#9cdcfe; font:12px monospace; }
+  .pdf-busy-bar { width:min(260px, 70%); height:4px; background:#444; border-radius:2px; overflow:hidden; }
+  .pdf-busy-bar > i { display:block; height:100%; background:#9cdcfe; width:0; transition:width .3s; }
+  .pdf-busy-hint { color:#888; font-size:11px; }
+  .pdfViewer .page { margin:8px auto; border:1px solid #444; }
+  #statusbars { height: 22px; display: flex; background: #1e1e1e; color: #9cdcfe; font: 12px monospace; }
+  #statusbars > div { flex: 1; padding: 0 8px; overflow: hidden; white-space: nowrap; opacity: 0.5; }
+  #statusbars > div.active { opacity: 1; }
+  #pdf-status { display:none; height:22px; background:#1e1e1e; color:#9cdcfe; font:12px monospace; align-items:center; padding:0 8px; }
+
+  /* 모달 다이얼로그 다크 스타일 (프로젝트 이름 입력 / 설정) */
+  dialog { background:#1e1e1e; color:#ddd; border:1px solid #555; border-radius:6px;
+    padding:16px; font:13px sans-serif; }
+  dialog::backdrop { background:rgba(0,0,0,0.5); }
+  dialog input[type=text] { background:#222; color:#ddd; border:1px solid #555; border-radius:4px; padding:4px 6px; }
+  dialog button { background:#333; color:#ddd; border:1px solid #555; border-radius:4px; padding:3px 10px; cursor:pointer; margin-left:6px; }
+  dialog button:hover { background:#444; }
+
+  /* 설정창 단축키 섹션 */
+  .sc-row { display:flex; align-items:center; gap:8px; margin:5px 0; }
+  .sc-row .sc-label { flex:0 0 150px; color:#ccc; }
+  .sc-row .sc-key { flex:0 0 96px; background:#222; color:#ddd; border:1px solid #555; border-radius:4px;
+    padding:4px 6px; text-align:center; font:13px sans-serif; cursor:pointer; }
+  .sc-row .sc-key.capturing { border-color:#0a84ff; color:#9cdcfe; }
+  .sc-row .sc-warn { color:#e0a030; font-size:11px; }
+</style>
+</head>
+<body>
+  <div id="toolbar">
+    <button id="btn-open-left">Open Left</button>
+    <button id="btn-open-right">Open Right</button>
+    <button id="btn-mode">PDF Mode</button>
+    <button id="btn-toc" title="목차 패널 열기/닫기">TOC</button>
+    <button id="btn-dict" title="선택한 영어를 실시간으로 한국어로 번역(사전/엔진)">Dict: OFF</button>
+    <span id="diff-controls">
+      <button id="btn-save">Save</button>
+      <button id="btn-prev-diff">◀ Diff</button>
+      <button id="btn-next-diff">Diff ▶</button>
+      <button id="btn-ws">Whitespace</button>
+      <button id="btn-vim">Vim</button>
+    </span>
+    <span id="pdf-controls" style="display:none">
+      <button id="btn-back" title="뒤로 (⌘←, 마우스 뒤로 버튼)">◀</button>
+      <button id="btn-forward" title="앞으로 (⌘→, 마우스 앞으로 버튼)">▶</button>
+      <button id="btn-zoom-out">−</button>
+      <button id="btn-zoom-in">+</button>
+      <span>Page <input id="pdf-page" type="number" min="1" value="1" style="width:46px" /> / <span id="pdf-total">0</span></span>
+      <input id="pdf-find" type="text" placeholder="찾기 (⌘F)" style="width:120px" />
+      <button id="btn-find-prev" title="이전 일치 (⇧Enter)">▲</button>
+      <button id="btn-find-next" title="다음 일치 (Enter)">▼</button>
+      <span id="pdf-find-count"></span>
+      <button id="btn-fit">Fit: ON</button>
+      <button id="btn-sync">Sync: ON</button>
+      <button id="btn-night" title="야간 모드: PDF 페이지 색 반전">Night: OFF</button>
+      <button id="btn-switch">⇄ Switch</button>
+      <button id="btn-translate">한국어 번역 ▶</button>
+    </span>
+    <button id="btn-theme">Theme</button>
+    <span id="toolbar-status" style="margin-left:auto; color:#9cdcfe; font:12px monospace;"></span>
+  </div>
+  <div id="diff-wrap">
+    <div id="md-toc-left" class="md-toc"></div>
+    <div id="editor"></div>
+    <div id="md-toc-right" class="md-toc"></div>
+  </div>
+  <div id="pdfview"></div>
+  <div id="statusbars"><div id="vim-left"></div><div id="vim-right"></div></div>
+  <div id="pdf-status"></div>
+
+  <dialog id="project-name-dialog">
+    <form method="dialog">
+      <div style="margin-bottom:8px; color:#ddd;">프로젝트 이름</div>
+      <input id="project-name-input" type="text" style="width:260px" autofocus />
+      <div style="margin-top:10px; text-align:right;">
+        <button value="cancel">취소</button>
+        <button id="project-name-ok" value="ok">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="settings-dialog">
+    <div style="color:#ddd; margin-bottom:10px; font-weight:bold;">설정</div>
+    <div style="margin-bottom:8px;">
+      <div style="color:#999; font-size:11px;">기록 보관 위치</div>
+      <input id="set-storage-path" type="text" readonly style="width:300px" />
+      <button id="set-storage-change">변경…</button>
+    </div>
+    <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-archive-pdf" /> PDF를 열 때 보관 폴더에 사본 저장</label>
+    <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-keep-translations" /> 번역본을 보관 폴더에 저장</label>
+
+    <div style="margin-top:12px; border-top:1px solid #444; padding-top:10px;">
+      <div style="color:#999; font-size:11px; margin-bottom:6px;">토글 단축키 (변경을 누르고 원하는 키 조합을 누르세요 · Esc 취소)</div>
+      <div id="shortcut-rows"></div>
+    </div>
+
+    <div style="margin-top:12px; border-top:1px solid #444; padding-top:10px;">
+      <div style="color:#999; font-size:11px; margin-bottom:6px;">번역 엔진·모델 (비우면 엔진 기본값 사용)</div>
+      <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
+        <span style="width:70px; display:inline-block; color:#ccc;">엔진</span>
+        <select id="set-translate-engine">
+          <option value="agy">agy</option>
+          <option value="claude">claude</option>
+        </select>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
+        <span style="width:70px; display:inline-block; color:#ccc;">agy 모델</span>
+        <input id="set-agy-model" list="agy-model-list" placeholder="(기본값)" style="width:200px" />
+        <datalist id="agy-model-list"></datalist>
+        <button id="set-agy-refresh">목록 새로고침</button>
+        <span id="set-agy-refresh-status" style="color:#999; font-size:11px;"></span>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
+        <span style="width:70px; display:inline-block; color:#ccc;">claude 모델</span>
+        <input id="set-claude-model" list="claude-model-list" placeholder="(기본값)" style="width:200px" />
+        <datalist id="claude-model-list"></datalist>
+      </div>
+    </div>
+
+    <div style="margin-top:10px; text-align:right;"><button id="settings-close">닫기</button></div>
+  </dialog>
+
+  <script src="./app.js"></script>
+</body>
+</html>

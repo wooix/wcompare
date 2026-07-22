@@ -1,3 +1,7 @@
 node_modules/
 dist/
+release/
 .DS_Store
+test-results/
+playwright-report/
+.omc/
