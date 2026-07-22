@@ -335,6 +335,15 @@ export function createDualView(hostEl) {
   // 우클릭 시점에 선택 영역을 "동기적으로" 캡처해 둔다 — 메뉴를 띄우는 동안 선택이 사라질 수 있다.
   let pending = null;
 
+  // 사용자 조작으로 마커가 실제로 바뀌면(추가·삭제, 색상은 새 마커 추가로 취급) 알린다.
+  // side가 아니라 "문서 키(경로)"를 넘긴다 → switch로 side가 바뀌어도 저장 대상이 어긋나지 않는다.
+  // 복원(setMarkers)은 여기를 거치지 않으므로 불필요한 재저장을 유발하지 않는다.
+  const markersChangedCbs = [];
+  function notifyMarkersChanged(side) {
+    const key = marks[side].getDoc();
+    if (key) markersChangedCbs.forEach((cb) => cb(key));
+  }
+
   function contextInfo(side, clientX, clientY) {
     pending = { side, capture: marks[side].captureSelection(panes[side]) };
     return {
@@ -348,9 +357,11 @@ export function createDualView(hostEl) {
   // 우클릭 메뉴 경로: contextInfo()가 미리 잡아 둔 캡처를 쓴다.
   function addMarker(kind, color) {
     if (!pending?.capture) return markSelection(kind, color);
-    marks[pending.side].add(pending.capture, kind, color);
+    const side = pending.side;
+    const made = marks[side].add(pending.capture, kind, color);
     window.getSelection()?.removeAllRanges();
     pending = null;
+    if (made.length) notifyMarkersChanged(side);
     return true;
   }
 
@@ -362,13 +373,14 @@ export function createDualView(hostEl) {
     if (!side) return false;
     const capture = marks[side].captureSelection(panes[side]);
     if (!capture) return false;
-    marks[side].add(capture, kind, color);
+    const made = marks[side].add(capture, kind, color);
     sel.removeAllRanges();
+    if (made.length) notifyMarkersChanged(side);
     return true;
   }
 
   function removeMarker(side, id) {
-    if (id) marks[side].remove(id);
+    if (id && marks[side].remove(id)) notifyMarkersChanged(side);
   }
 
   // ===== 미러 점프 =====
@@ -475,6 +487,11 @@ export function createDualView(hostEl) {
     markerStore.set(key, Array.isArray(list) ? list : []);
     marks[side].renderAll();
   }
+  // 자동 저장용 — 경로(문서 키)로 마커를 직접 읽는다. side가 아니라 경로 기준이라
+  // switch로 side가 바뀌어도 항상 그 문서의 현재 마커를 돌려준다.
+  function getMarkersByPath(key) {
+    return [...(markerStore.get(key) || [])];
+  }
 
   return {
     openSide,
@@ -494,6 +511,8 @@ export function createDualView(hostEl) {
     removeMarker,
     getMarkers,
     setMarkers,
+    getMarkersByPath,
+    onMarkersChanged: (cb) => markersChangedCbs.push(cb),
     jumpMirror,
     setOutline,
     isOutline: () => outlineOpen,

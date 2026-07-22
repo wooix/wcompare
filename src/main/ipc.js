@@ -7,6 +7,7 @@ const { lint } = require('./lint/lintService.js');
 const { translate, outputPathFor } = require('./transpaper.js');
 const { allowed, openedPdfs, normalize, allowPath } = require('./allowlist.js');
 const { triggerShortcutDict } = require('./shortcutDict.js');
+const markerStore = require('./markerStore.js');
 const project = require('./project.js');
 const recentFiles = require('./recentFiles.js');
 const settings = require('./settings.js');
@@ -137,6 +138,22 @@ function registerIpc() {
     triggerShortcutDict(fakeDictRun ? { run: fakeDictRun } : undefined));
 
   ipcMain.handle('lint:run', (_e, payload) => lint(payload));
+
+  // ===== PDF 마커 자동 영속화 =====
+  // 경로는 렌더러가 보낸 값을 normalize(realpath) 후 "이 세션에서 연 PDF"(openedPdfs)에 있을 때만 다룬다.
+  // 이 앱의 보안 원칙(allowlist) 그대로 — 임의 경로에 쓰거나 임의 경로를 읽지 못하게 한다.
+  //  - save: 미허용 경로면 throw로 명확히 거부(테스트 가능). markers는 markerStore가 sanitize 후 기록.
+  //  - load: 미허용 경로면 조용히 [] 반환(복원은 열기 직후 자동 실행이라 예외로 흐름을 깨지 않는다).
+  ipcMain.handle('markers:save', (_e, rawPath, markers) => {
+    const p = normalize(rawPath);
+    if (!openedPdfs.has(p)) throw new Error('markers save denied: 이 세션에서 연 PDF가 아닙니다');
+    return markerStore.save(settings.dirFor('markers'), p, markers);
+  });
+  ipcMain.handle('markers:load', (_e, rawPath) => {
+    const p = normalize(rawPath);
+    if (!openedPdfs.has(p)) return [];
+    return markerStore.load(settings.dirFor('markers'), p);
+  });
 
   ipcMain.handle('pdf:translate', async (e, { path: rawPath, force } = {}) => {
     const wc = e.sender;

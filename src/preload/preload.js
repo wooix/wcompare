@@ -33,6 +33,11 @@ contextBridge.exposeInMainWorld('wcompare', {
   dict: {
     external: () => ipcRenderer.invoke('dict:external'),
   },
+  // PDF 마커 자동 영속화: 경로별 마커 저장/복원. path는 openPdf가 받은 정규화 절대경로.
+  markers: {
+    save: (path, markers) => ipcRenderer.invoke('markers:save', path, markers),
+    load: (path) => ipcRenderer.invoke('markers:load', path),
+  },
   onProjectLoad: (cb) => ipcRenderer.on('project:load', (_e, p) => cb(p)),
   // 최근 파일: 메뉴 클릭 시 main이 allowlist에 등록한 경로를 보낸다
   onOpenRecentFile: (cb) => ipcRenderer.on('menu:open-recent-file', (_e, p) => cb(p)),

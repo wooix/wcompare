@@ -174,15 +174,17 @@ export function createMarkerLayer(viewer, store) {
     return null;
   }
 
+  // 실제로 삭제했으면 true — 호출측(자동 저장)이 "변경 있음"을 정확히 판단하는 데 쓴다.
   function remove(id) {
-    if (!docKey) return;
+    if (!docKey) return false;
     const arr = store.get(docKey);
-    if (!arr) return;
+    if (!arr) return false;
     const i = arr.findIndex((m) => m.id === id);
-    if (i < 0) return;
+    if (i < 0) return false;
     const { page } = arr[i];
     arr.splice(i, 1);
     renderPage(page);
+    return true;
   }
 
   return {

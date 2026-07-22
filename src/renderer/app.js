@@ -91,6 +91,8 @@ function ensureDualView() {
   dualView = createDualView($('pdfview'));
   dualView.onState(renderPdfStatus);
   dualView.onFind(renderFindCount);
+  // 사용자가 마커를 추가·삭제(색상 변경 포함)하면 그 문서의 마커를 디바운스 저장한다.
+  dualView.onMarkersChanged((docPath) => scheduleMarkerSave(docPath));
   return dualView;
 }
 // 원문/번역본은 텍스트가 달라 한쪽만 걸리는 게 정상 → 양쪽 결과를 따로 보여준다.
@@ -138,11 +140,48 @@ async function openPdf(side, p) {
     setMode('pdf');
     await dualView.openSide(side, { bytes, path: real });
     pdfPaths[side] = real;
+    // 자동 복원: 이 PDF에 저장된 마커를 불러와 붙인다(단순 열기·DnD·CLI·최근 파일 모두 이 경로를 지난다).
+    // 이미 메모리에 이 문서의 마커가 있으면(같은 PDF를 다른 pane에서 먼저 열어 편집 중) 덮어쓰지 않는다.
+    // 프로젝트 로드는 openByPath→여기로 들어와 자동 복원하지만, onProjectLoad가 마지막에
+    // setMarkers로 프로젝트 파일의 markers를 덮어써 "프로젝트가 우선"한다(설계 확정).
+    await restoreMarkers(side, real);
     updatePdfBtns();
   } catch (e) {
     alert('PDF를 열 수 없습니다: ' + (e?.message || e));
   }
 }
+
+// ===== 마커 자동 영속화 =====
+// 저장은 문서 경로별로 500ms 디바운스한다. 복원은 열기 직후 1회.
+const markerSaveTimers = new Map(); // 문서경로 → setTimeout 핸들
+async function restoreMarkers(side, docPath) {
+  try {
+    const saved = await window.wcompare.markers.load(docPath);
+    // 디스크에 저장분이 있고 메모리에 아직 이 문서 마커가 없을 때만 붙인다(진행 중 편집 클로버 방지).
+    if (saved.length && !dualView.getMarkersByPath(docPath).length) dualView.setMarkers(side, saved);
+  } catch (e) {
+    console.warn('마커 복원 실패(무시):', e?.message || e);
+  }
+}
+function scheduleMarkerSave(docPath) {
+  if (!docPath) return;
+  clearTimeout(markerSaveTimers.get(docPath));
+  markerSaveTimers.set(docPath, setTimeout(() => {
+    markerSaveTimers.delete(docPath);
+    // 경로 기준으로 현재 마커를 읽는다 — 그사이 switch로 side가 바뀌어도 대상이 어긋나지 않는다.
+    const markers = dualView.getMarkersByPath(docPath);
+    window.wcompare.markers.save(docPath, markers).catch((e) => console.warn('마커 저장 실패(무시):', e?.message || e));
+  }, 500));
+}
+// 창이 닫힐 때 디바운스 대기 중인 저장을 즉시 흘려보낸다 — 편집 후 500ms 이내 종료 시 유실 방지.
+// invoke는 비동기지만 main 프로세스가 렌더러보다 오래 살아 있어 기록은 완료된다.
+window.addEventListener('pagehide', () => {
+  for (const [docPath, timer] of markerSaveTimers) {
+    clearTimeout(timer);
+    window.wcompare.markers.save(docPath, dualView.getMarkersByPath(docPath)).catch(() => {});
+  }
+  markerSaveTimers.clear();
+});
 
 // 좌우 교체 — 뷰어 문서와 경로를 함께 맞바꾼다.
 async function switchSides() {
