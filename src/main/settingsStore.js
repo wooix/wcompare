@@ -2,11 +2,14 @@
 // createSettingsStore(filePath, defaults) → { get, set }
 //  - get(): 파일을 읽어 defaults와 merge(깨졌으면 defaults). 알 수 없는 키는 버린다.
 //  - set(patch): 허용 키(defaults의 키)만, 타입이 맞을 때만 반영. tmp+rename 원자 기록 후 결과 반환.
-//    · storageDir: 절대경로 문자열,  boolean 키: boolean,  object 키(shortcuts): 하위 병합.
+//    · storageDir: 절대경로 문자열,  boolean 키: boolean,
+//    · object 키(shortcuts, translate): 하위 병합 — 하위값은 defaults의 타입과 같을 때만 채택.
+//      문자열 하위 defaults → 문자열만, 배열(문자열 배열) 하위 defaults → 원소가 전부 문자열인 배열만(통째 교체).
 const fs = require('node:fs');
 const path = require('node:path');
 
 const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
 function createSettingsStore(filePath, defaults) {
   const keys = Object.keys(defaults);
@@ -18,13 +21,21 @@ function createSettingsStore(filePath, defaults) {
     return false;
   }
 
-  // object 키(예: shortcuts) 병합: def의 하위 키만 채택하고 각 하위값이 문자열일 때만 반영한다
-  // (빈 문자열 허용 = 단축키 없음). 알 수 없는 하위 키는 무시. base(현재 병합값) 위에 incoming을 덮어쓴다.
+  // object 키(예: shortcuts, translate) 병합: def의 하위 키만 채택하고, 하위값의 타입이
+  // defaults의 그 하위값과 같은 종류일 때만 반영한다 — 문자열 defaults(예: shortcuts.dict,
+  // translate.agyModel)는 문자열만(빈 문자열 허용 = "없음"), 문자열 배열 defaults(예:
+  // translate.agyModels)는 원소가 전부 문자열인 배열만(통째 교체). 알 수 없는 하위 키는 무시.
+  // base(현재 병합값) 위에 incoming을 덮어쓴다.
+  function validSubValue(defVal, val) {
+    if (typeof defVal === 'string') return typeof val === 'string';
+    if (Array.isArray(defVal)) return isStringArray(val);
+    return false;
+  }
   function mergeObject(def, base, incoming) {
     const out = { ...def, ...(isPlainObject(base) ? base : {}) };
     if (isPlainObject(incoming)) {
       for (const sub of Object.keys(def)) {
-        if (sub in incoming && typeof incoming[sub] === 'string') out[sub] = incoming[sub];
+        if (sub in incoming && validSubValue(def[sub], incoming[sub])) out[sub] = incoming[sub];
       }
     }
     return out;

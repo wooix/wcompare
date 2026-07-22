@@ -1,4 +1,4 @@
-// test/e2e/shortcuts.spec.js — 커스텀 토글 단축키 + ON 버튼 하이라이트 + 설정창 단축키 섹션.
+// test/e2e/shortcuts.spec.js — 커스텀 토글 단축키 + ON 버튼 하이라이트 + 설정창 단축키/번역 모델 섹션.
 // PDF 전용(fit/sync/switch)은 설정이 무거워, 공통 토글인 night(⌥N)·dict(⌘D)로 발동을 검증한다.
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('node:path');
@@ -110,6 +110,37 @@ test('설정창에서 키 캡처로 단축키를 바꾸면 표시·저장·경�
     .toBe('Cmd+F');
   // 현재 창 변수도 즉시 갱신
   expect(await win.evaluate(() => window.__wc.getShortcuts().fit)).toBe('Cmd+F');
+
+  await app.close();
+  cleanup(ctx);
+});
+
+test('설정창에 번역 엔진·모델 섹션이 뜨고 값을 바꾸면 저장된다', async () => {
+  const ctx = await launch();
+  const { app, win } = ctx;
+
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('menu:settings'));
+  await win.waitForSelector('#settings-dialog[open]', { timeout: 10000 });
+
+  // 기본값이 표시된다
+  await expect(win.locator('#set-translate-engine')).toHaveValue('agy');
+  await expect(win.locator('#set-agy-model')).toHaveValue('');
+  await expect(win.locator('#set-claude-model')).toHaveValue('');
+
+  // 엔진 변경 → 저장
+  await win.selectOption('#set-translate-engine', 'claude');
+  await expect
+    .poll(() => win.evaluate(async () => (await window.wcompare.settings.get()).translate.engine), { timeout: 8000 })
+    .toBe('claude');
+
+  // 목록에 없는 커스텀 모델명을 입력 → 저장되고 그 모델이 목록에도 자동으로 추가된다
+  await win.fill('#set-claude-model', 'claude-sonnet-4-6');
+  await win.locator('#set-claude-model').dispatchEvent('change');
+  await expect
+    .poll(() => win.evaluate(async () => (await window.wcompare.settings.get()).translate.claudeModel), { timeout: 8000 })
+    .toBe('claude-sonnet-4-6');
+  const claudeModels = await win.evaluate(async () => (await window.wcompare.settings.get()).translate.claudeModels);
+  expect(claudeModels).toContain('claude-sonnet-4-6');
 
   await app.close();
   cleanup(ctx);

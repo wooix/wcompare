@@ -12,6 +12,10 @@ const EXTRA_BIN_DIRS = [
   '/usr/local/bin',
 ];
 
+// agy/claude 모델명 형식 검증. transpaper의 --agy-model/--claude-model 값과 agy가 출력하는
+// 모델 목록 파싱 양쪽에서 쓴다 — 선행 '-' 등 불량 값이 플래그로 오인되는 것을 막는다.
+const MODEL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+
 const NOT_FOUND_HINT =
   'transpaper를 찾을 수 없습니다.\n\n' +
   '다음 중 하나로 해결하세요:\n' +
@@ -53,6 +57,16 @@ function resolveBin(env = process.env, appRoot = path.join(__dirname, '..', '..'
   return isExec(sibling) ? sibling : null;
 }
 
+// agy CLI 탐색 — transpaper와 별개 실행 파일이라 venv sibling 폴백 없이 PATH 보강 디렉터리만 뒤진다
+// (models:refresh에서 "agy models" 목록을 뽑을 때 씀).
+function resolveAgyBin(env = process.env, extraDirs = EXTRA_BIN_DIRS) {
+  for (const dir of pathDirs(env, extraDirs)) {
+    const cand = path.join(dir, 'agy');
+    if (isExec(cand)) return cand;
+  }
+  return null;
+}
+
 // 출력 경로는 항상 메인이 유도한다 — 렌더러가 임의 경로를 지정하면 임의 파일 쓰기가 된다.
 function outputPathFor(input, tmpDir = os.tmpdir()) {
   const dir = path.dirname(input);
@@ -80,21 +94,39 @@ function onLines(stream, cb) {
   });
 }
 
+// "agy models" stdout 파싱 — 줄 단위로 trim하고, 빈 줄과 MODEL_NAME_RE에 안 맞는 줄은 버린다.
+function parseModelList(stdout) {
+  return String(stdout || '').split('\n').map((l) => l.trim()).filter((l) => l && MODEL_NAME_RE.test(l));
+}
+
+// translate()의 CLI 인자 구성 — 순수 함수로 분리해 단위 테스트한다.
+// engine이 'agy'|'claude'면 --engine을 붙이고(그 외 값·미지정은 생략 = transpaper 기본 agy),
+// agyModel/claudeModel은 MODEL_NAME_RE를 통과할 때만 붙인다(빈 값·불량 값은 조용히 생략).
+function buildTranslateArgs(input, outPath, translateSettings = {}) {
+  const args = [input, '-o', outPath, '-v'];
+  const { engine, agyModel, claudeModel } = translateSettings || {};
+  if (engine === 'agy' || engine === 'claude') args.push('--engine', engine);
+  if (typeof agyModel === 'string' && MODEL_NAME_RE.test(agyModel)) args.push('--agy-model', agyModel);
+  if (typeof claudeModel === 'string' && MODEL_NAME_RE.test(claudeModel)) args.push('--claude-model', claudeModel);
+  return args;
+}
+
 /**
  * transpaper를 띄우고 진행 상황을 스트리밍한다.
  * @param {string} input 원본 PDF 절대경로
  * @param {object} [opts]
  * @param {(d:{done:number})=>void} [opts.onProgress] 페이지마다 호출
  * @param {string} [opts.output] 출력 경로를 직접 지정(없으면 outputPathFor로 유도). main이 유도한 값만 넘긴다.
+ * @param {object} [opts.translateSettings] settings.get().translate — engine/agyModel/claudeModel.
  * @returns {{ promise: Promise<{output,partial,pages}>, cancel: () => void, output: string }}
  */
-function translate(input, { onProgress, output, env = process.env } = {}) {
+function translate(input, { onProgress, output, env = process.env, translateSettings } = {}) {
   const bin = resolveBin(env);
   if (!bin) return { promise: Promise.reject(new Error(NOT_FOUND_HINT)), cancel() {}, output: null };
 
   const outPath = output || outputPathFor(input);
   // detached: 자신만의 프로세스 그룹을 갖게 해, 취소 시 transpaper가 띄운 agy/claude까지 함께 정리한다.
-  const child = spawn(bin, [input, '-o', outPath, '-v'], {
+  const child = spawn(bin, buildTranslateArgs(input, outPath, translateSettings), {
     env: envWithPath(env), detached: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -124,4 +156,7 @@ function translate(input, { onProgress, output, env = process.env } = {}) {
   return { promise, cancel, output: outPath };
 }
 
-module.exports = { translate, resolveBin, outputPathFor, isProgressLine, pathDirs, envWithPath, NOT_FOUND_HINT };
+module.exports = {
+  translate, resolveBin, resolveAgyBin, outputPathFor, isProgressLine, pathDirs, envWithPath,
+  buildTranslateArgs, parseModelList, MODEL_NAME_RE, NOT_FOUND_HINT,
+};

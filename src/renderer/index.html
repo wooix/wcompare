@@ -188,6 +188,29 @@
       <div id="shortcut-rows"></div>
     </div>
 
+    <div style="margin-top:12px; border-top:1px solid #444; padding-top:10px;">
+      <div style="color:#999; font-size:11px; margin-bottom:6px;">번역 엔진·모델 (비우면 엔진 기본값 사용)</div>
+      <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
+        <span style="width:70px; display:inline-block; color:#ccc;">엔진</span>
+        <select id="set-translate-engine">
+          <option value="agy">agy</option>
+          <option value="claude">claude</option>
+        </select>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
+        <span style="width:70px; display:inline-block; color:#ccc;">agy 모델</span>
+        <input id="set-agy-model" list="agy-model-list" placeholder="(기본값)" style="width:200px" />
+        <datalist id="agy-model-list"></datalist>
+        <button id="set-agy-refresh">목록 새로고침</button>
+        <span id="set-agy-refresh-status" style="color:#999; font-size:11px;"></span>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
+        <span style="width:70px; display:inline-block; color:#ccc;">claude 모델</span>
+        <input id="set-claude-model" list="claude-model-list" placeholder="(기본값)" style="width:200px" />
+        <datalist id="claude-model-list"></datalist>
+      </div>
+    </div>
+
     <div style="margin-top:10px; text-align:right;"><button id="settings-close">닫기</button></div>
   </dialog>
 

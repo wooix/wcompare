@@ -11,6 +11,7 @@ const DEFAULTS = {
   archivePdfOnOpen: false,
   keepTranslationsInStorage: false,
   shortcuts: { dict: 'Cmd+D', fit: 'Alt+F', sync: 'Alt+S', night: 'Alt+N', switch: 'Alt+ArrowRight' },
+  translate: { engine: 'agy', agyModel: '', claudeModel: '', agyModels: [], claudeModels: ['sonnet', 'opus', 'haiku'] },
 };
 
 const store = (name = 'settings.json') =>
@@ -114,6 +115,33 @@ test('shortcuts: shortcuts가 object가 아니면 무시한다', () => {
   const s = store();
   const after = s.set({ shortcuts: 'not-an-object' });
   assert.deepEqual(after.shortcuts, DEFAULTS.shortcuts, '문자열 patch는 기본값 유지');
+});
+
+// ===== translate (object 하위값으로 문자열 배열을 허용) =====
+test('translate: 문자열 배열 하위값(agyModels)을 통째로 교체한다', () => {
+  const s = store();
+  const after = s.set({ translate: { agyModels: ['a', 'b'] } });
+  assert.deepEqual(after.translate.agyModels, ['a', 'b']);
+  assert.equal(after.translate.engine, 'agy', '건드리지 않은 하위값은 기본값 보존');
+  assert.deepEqual(s.get().translate.agyModels, ['a', 'b'], '다시 읽어도 같다');
+
+  const replaced = s.set({ translate: { agyModels: ['c'] } });
+  assert.deepEqual(replaced.translate.agyModels, ['c'], '이전 원소는 남지 않고 통째로 교체된다');
+});
+
+test('translate: 원소가 문자열이 아닌 배열은 거부하고 기존값을 유지한다', () => {
+  const s = store();
+  s.set({ translate: { claudeModels: ['x'] } });
+  const after = s.set({ translate: { claudeModels: ['ok', 123, null] } });
+  assert.deepEqual(after.translate.claudeModels, ['x'], '원소 하나라도 문자열이 아니면 배열 전체를 거부');
+});
+
+test('translate: 문자열 하위값(agyModel/engine)은 기존 shortcuts와 동일하게 문자열만 허용한다', () => {
+  const s = store();
+  const after = s.set({ translate: { engine: 'claude', agyModel: 'gemini-3.6-flash-low', claudeModel: 42 } });
+  assert.equal(after.translate.engine, 'claude');
+  assert.equal(after.translate.agyModel, 'gemini-3.6-flash-low');
+  assert.equal(after.translate.claudeModel, '', '숫자는 거부하고 기본값 유지');
 });
 
 test('원자 기록: 임시파일을 남기지 않고 파일 하나만 만든다', () => {

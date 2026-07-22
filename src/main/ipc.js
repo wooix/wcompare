@@ -2,9 +2,10 @@
 const { ipcMain, dialog, BrowserWindow, Menu, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { spawn } = require('node:child_process');
 const { readFile, writeFile, readBytes } = require('./fileService.js');
 const { lint } = require('./lint/lintService.js');
-const { translate, outputPathFor } = require('./transpaper.js');
+const { translate, outputPathFor, resolveAgyBin, envWithPath, parseModelList } = require('./transpaper.js');
 const { allowed, openedPdfs, normalize, allowPath } = require('./allowlist.js');
 const { triggerShortcutDict } = require('./shortcutDict.js');
 const markerStore = require('./markerStore.js');
@@ -107,8 +108,11 @@ function registerIpc() {
     const next = {};
     if (typeof patch.archivePdfOnOpen === 'boolean') next.archivePdfOnOpen = patch.archivePdfOnOpen;
     if (typeof patch.keepTranslationsInStorage === 'boolean') next.keepTranslationsInStorage = patch.keepTranslationsInStorage;
-    // shortcuts는 object면 그대로 넘기고 settingsStore가 하위 키·문자열 값을 재검증한다.
+    // shortcuts/translate는 object면 그대로 넘기고 settingsStore가 하위 키·타입을 재검증한다.
     if (patch.shortcuts && typeof patch.shortcuts === 'object') next.shortcuts = patch.shortcuts;
+    if (patch.translate && typeof patch.translate === 'object' && !Array.isArray(patch.translate)) {
+      next.translate = patch.translate;
+    }
     return settings.set(next);
   });
   ipcMain.handle('settings:pick-storage-dir', async (e) => {
@@ -117,6 +121,37 @@ function registerIpc() {
     if (res.canceled || !res.filePaths[0]) return null;
     return settings.set({ storageDir: res.filePaths[0] }); // 절대경로만 통과(settingsStore가 검증)
   });
+
+  // agy 모델 목록 새로고침: "agy models"를 실행해 줄 단위 모델명을 뽑아 설정에 저장한다.
+  // 렌더러는 인자를 넘기지 않는다 — 실행 파일 탐색·경로 결정은 전부 main이 한다(allowlist 원칙).
+  ipcMain.handle('models:refresh', () => new Promise((resolve) => {
+    const bin = resolveAgyBin();
+    if (!bin) return resolve({ ok: false, error: 'agy 실행 파일을 찾을 수 없습니다 (~/.local/bin 등 확인)' });
+
+    const child = spawn(bin, ['models'], { env: envWithPath(), stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let errTail = '';
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* 이미 종료됨 */ }
+      finish({ ok: false, error: 'agy models 실행이 시간 초과되었습니다(15초)' });
+    }, 15000);
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { errTail += d; });
+    child.on('error', (e) => finish({ ok: false, error: `agy 실행 실패: ${e.message}` }));
+    child.on('close', (code) => {
+      if (code !== 0) return finish({ ok: false, error: `agy models 오류 (exit ${code})\n${errTail.slice(-400)}` });
+      const models = parseModelList(out);
+      settings.set({ translate: { agyModels: models } });
+      finish({ ok: true, models });
+    });
+  }));
 
   // 전체 텍스트 복사 등 "DOM 선택이 아닌" 텍스트의 클립보드 기록.
   // (선택 복사는 반드시 role:'copy' — 아래 컨텍스트 메뉴 주석 참고.)
@@ -162,7 +197,8 @@ function registerIpc() {
     if (!openedPdfs.has(p)) throw new Error('translate denied: 이 세션에서 연 PDF가 아닙니다');
     if (jobs.has(wcId)) throw new Error('이 창에서 이미 번역이 진행 중입니다');
 
-    const output = settings.get().keepTranslationsInStorage
+    const s = settings.get();
+    const output = s.keepTranslationsInStorage
       ? path.join(settings.dirFor('translations'), path.basename(p).replace(/\.pdf$/i, '') + '.ko.pdf')
       : outputPathFor(p);
     if (!force && fs.existsSync(output)) return { output, existed: true };
@@ -172,6 +208,7 @@ function registerIpc() {
     const job = translate(p, {
       onProgress: (d) => { if (!wc.isDestroyed()) wc.send('pdf:translate:progress', d); },
       output,
+      translateSettings: s.translate,
     });
     jobs.add(wcId, output, job);
     try {

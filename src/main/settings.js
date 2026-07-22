@@ -19,6 +19,17 @@ const DEFAULTS = {
     night: 'Alt+N',
     switch: 'Alt+ArrowRight',
   },
+  // 번역 AI 모델 선택. engine은 transpaper --engine에 그대로 전달(agy|claude).
+  // agyModel/claudeModel이 빈 문자열이면 엔진 기본값을 쓴다(플래그 생략).
+  // agyModels는 "목록 새로고침"(agy models)으로 채워지고, claudeModels는 자주 쓰는 값으로 미리 채운다.
+  // 둘 다 사용자가 목록에 없는 모델명을 입력하면 자동으로 추가된다(settingsStore의 문자열 배열 지원).
+  translate: {
+    engine: 'agy',
+    agyModel: '',
+    claudeModel: '',
+    agyModels: [],
+    claudeModels: ['sonnet', 'opus', 'haiku'],
+  },
 };
 
 let store = null;

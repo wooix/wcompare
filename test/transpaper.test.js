@@ -4,7 +4,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { resolveBin, outputPathFor, isProgressLine, pathDirs, translate } = require('../src/main/transpaper.js');
+const {
+  resolveBin, outputPathFor, isProgressLine, pathDirs, translate, buildTranslateArgs, parseModelList,
+} = require('../src/main/transpaper.js');
 
 function tmpExec(name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-tp-'));
@@ -69,6 +71,46 @@ test('translate: output 오버라이드가 주어지면 outputPathFor 대신 그
   assert.equal(job.output, custom, '반환 객체의 output이 지정 경로여야 한다');
   const res = await job.promise;
   assert.equal(res.output, custom, 'promise 결과의 output도 지정 경로여야 한다');
+});
+
+// ===== buildTranslateArgs (순수 함수) =====
+test('buildTranslateArgs: 정상 engine·모델이면 --engine/--agy-model/--claude-model을 붙인다', () => {
+  const args = buildTranslateArgs('/in.pdf', '/out.ko.pdf', {
+    engine: 'claude', agyModel: 'gemini-3.6-flash-low', claudeModel: 'claude-sonnet-4-6',
+  });
+  assert.deepEqual(args, [
+    '/in.pdf', '-o', '/out.ko.pdf', '-v',
+    '--engine', 'claude',
+    '--agy-model', 'gemini-3.6-flash-low',
+    '--claude-model', 'claude-sonnet-4-6',
+  ]);
+});
+
+test('buildTranslateArgs: 빈 값/미지정이면 플래그를 생략한다(엔진 기본값 사용)', () => {
+  assert.deepEqual(buildTranslateArgs('/in.pdf', '/out.ko.pdf', {}), ['/in.pdf', '-o', '/out.ko.pdf', '-v']);
+  assert.deepEqual(
+    buildTranslateArgs('/in.pdf', '/out.ko.pdf', { engine: 'agy', agyModel: '', claudeModel: '' }),
+    ['/in.pdf', '-o', '/out.ko.pdf', '-v', '--engine', 'agy'],
+  );
+  assert.deepEqual(buildTranslateArgs('/in.pdf', '/out.ko.pdf', undefined), ['/in.pdf', '-o', '/out.ko.pdf', '-v']);
+});
+
+test('buildTranslateArgs: 불량 모델명(선행 -, 공백 등)은 조용히 생략한다', () => {
+  const args = buildTranslateArgs('/in.pdf', '/out.ko.pdf', {
+    engine: 'weird', agyModel: '-rf', claudeModel: 'has space',
+  });
+  assert.deepEqual(args, ['/in.pdf', '-o', '/out.ko.pdf', '-v'], 'engine도 agy/claude가 아니면 생략');
+});
+
+// ===== parseModelList (순수 함수) =====
+test('parseModelList: 줄 단위 trim·빈 줄 제외·형식 안 맞는 줄 제외', () => {
+  const out = 'gemini-3.6-flash-low\n\n  claude-sonnet-4-6  \n-bad-line\nhas space\nclaude-opus-4-1\n';
+  assert.deepEqual(parseModelList(out), ['gemini-3.6-flash-low', 'claude-sonnet-4-6', 'claude-opus-4-1']);
+});
+
+test('parseModelList: 빈 입력은 빈 배열', () => {
+  assert.deepEqual(parseModelList(''), []);
+  assert.deepEqual(parseModelList(undefined), []);
 });
 
 test('resolveBin: 형제 저장소의 venv를 개발 편의로 탐색', () => {

@@ -33,6 +33,10 @@ contextBridge.exposeInMainWorld('wcompare', {
   dict: {
     external: () => ipcRenderer.invoke('dict:external'),
   },
+  // 번역 AI 모델 목록: agy CLI("agy models")를 실행해 설정에 저장하고 목록을 돌려준다.
+  models: {
+    refresh: () => ipcRenderer.invoke('models:refresh'),
+  },
   // PDF 마커 자동 영속화: 경로별 마커 저장/복원. path는 openPdf가 받은 정규화 절대경로.
   markers: {
     save: (path, markers) => ipcRenderer.invoke('markers:save', path, markers),

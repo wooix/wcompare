@@ -547,6 +547,74 @@ document.addEventListener('keydown', (e) => {
 }, true);
 buildShortcutRows();
 
+// ===== 설정창: 번역 엔진·모델 =====
+// translateModelLists는 datalist를 채우는 현재 목록(agyModels/claudeModels)의 로컬 사본 —
+// "목록 새로고침"·모델 저장이 성공할 때마다 서버(settings)가 돌려준 값으로 갱신한다.
+let translateModelLists = { agyModels: [], claudeModels: [] };
+function fillDatalist(id, models) {
+  const dl = $(id);
+  if (!dl) return;
+  dl.innerHTML = '';
+  for (const m of models || []) {
+    const opt = document.createElement('option');
+    opt.value = m;
+    dl.appendChild(opt);
+  }
+}
+function applyTranslateSettings(t) {
+  if (!t) return;
+  translateModelLists = { agyModels: t.agyModels || [], claudeModels: t.claudeModels || [] };
+  $('set-translate-engine').value = t.engine || 'agy';
+  $('set-agy-model').value = t.agyModel || '';
+  $('set-claude-model').value = t.claudeModel || '';
+  fillDatalist('agy-model-list', translateModelLists.agyModels);
+  fillDatalist('claude-model-list', translateModelLists.claudeModels);
+}
+// 입력한 모델이 목록에 없으면 그 목록에 추가해 사용자 정의 모델을 유지한다(통째 교체 배열).
+function withCustomModel(list, value) {
+  if (!value || (list || []).includes(value)) return list || [];
+  return [...(list || []), value];
+}
+function saveTranslateEngine() {
+  window.wcompare.settings.set({ translate: { engine: $('set-translate-engine').value } })
+    .then((s) => applyTranslateSettings(s?.translate)).catch(() => {});
+}
+function saveAgyModel() {
+  const v = $('set-agy-model').value.trim();
+  const agyModels = withCustomModel(translateModelLists.agyModels, v);
+  window.wcompare.settings.set({ translate: { agyModel: v, agyModels } })
+    .then((s) => applyTranslateSettings(s?.translate)).catch(() => {});
+}
+function saveClaudeModel() {
+  const v = $('set-claude-model').value.trim();
+  const claudeModels = withCustomModel(translateModelLists.claudeModels, v);
+  window.wcompare.settings.set({ translate: { claudeModel: v, claudeModels } })
+    .then((s) => applyTranslateSettings(s?.translate)).catch(() => {});
+}
+$('set-translate-engine').onchange = saveTranslateEngine;
+$('set-agy-model').onchange = saveAgyModel;
+$('set-claude-model').onchange = saveClaudeModel;
+$('set-agy-refresh').onclick = async () => {
+  const status = $('set-agy-refresh-status');
+  const btn = $('set-agy-refresh');
+  btn.disabled = true;
+  status.textContent = '새로고침 중…';
+  try {
+    const res = await window.wcompare.models.refresh();
+    if (res?.ok) {
+      translateModelLists.agyModels = res.models || [];
+      fillDatalist('agy-model-list', translateModelLists.agyModels);
+      status.textContent = `${(res.models || []).length}개 모델 로드됨`;
+    } else {
+      status.textContent = '새로고침 실패: ' + (res?.error || '알 수 없는 오류');
+    }
+  } catch (e) {
+    status.textContent = '새로고침 실패: ' + (e?.message || e);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
 // ===== PDF 야간 모드 =====
 // 페이지 canvas만 CSS 필터로 반전한다(index.html). Monaco 테마(btn-theme)와는 독립 —
 // 묶으면 diff/pdf 상태가 서로 꼬인다.
@@ -731,6 +799,8 @@ async function openSettings() {
   $('set-keep-translations').checked = !!s.keepTranslationsInStorage;
   if (s.shortcuts) shortcuts = { ...shortcuts, ...s.shortcuts }; // 저장된 값으로 현재 창 갱신
   renderAllShortcutRows();
+  applyTranslateSettings(s.translate);
+  $('set-agy-refresh-status').textContent = '';
   $('settings-dialog').showModal();
 }
 
