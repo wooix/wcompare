@@ -217,6 +217,41 @@ test('확대: 가로가 넘칠 때 왼쪽이 아니라 중앙을 기준으로 �
   fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
 });
 
+test('Sync OFF: 휠 줌이 대상 side에만 적용되고 반대편은 그대로다', async () => {
+  const { a, b } = writePair('zoomoff' + Date.now());
+  const app = await electron.launch({ args: [MAIN, a, b] });
+  const win = await app.firstWindow();
+  await win.waitForSelector(`${rightC} canvas`, { timeout: 20000 });
+
+  await win.click('#btn-sync');
+  await expect(win.locator('#btn-sync')).toHaveText('Sync: OFF');
+
+  const overflowX = (sel) => win.evaluate((s) => {
+    const el = document.querySelector(s);
+    return el.scrollWidth - el.clientWidth;
+  }, sel);
+
+  expect(await overflowX(leftC)).toBeLessThanOrEqual(1);
+  expect(await overflowX(rightC)).toBeLessThanOrEqual(1);
+
+  // 왼쪽 pane 위에서 Ctrl+휠 → 왼쪽만 확대되어야 한다(휠 리스너가 자기 side를 zoom에 전달)
+  for (let i = 0; i < 4; i++) {
+    await win.evaluate((sel) => document.querySelector(sel).dispatchEvent(
+      new WheelEvent('wheel', { deltaY: -120, ctrlKey: true, bubbles: true, cancelable: true }),
+    ), leftC);
+  }
+  await win.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    return (el.scrollWidth - el.clientWidth) > 10;
+  }, leftC, { timeout: 5000 });
+
+  expect(await overflowX(leftC)).toBeGreaterThan(10);
+  expect(await overflowX(rightC)).toBeLessThanOrEqual(1); // Sync OFF → 반대편은 불변
+
+  await app.close();
+  fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
+});
+
 test('검색: 양쪽에서 동시에 찾고 일치 수를 보여준다', async () => {
   const { a, b } = writePair('find' + Date.now()); // 5쪽짜리 두 개, 각 쪽에 "Page N"
   const app = await electron.launch({ args: [MAIN, a, b] });

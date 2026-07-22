@@ -113,14 +113,21 @@ export function createDualView(hostEl) {
     requestAnimationFrame(() => { syncing = false; });
   }
 
+  // Sync OFF일 때 side 없이 zoom()이 호출되면(버튼·키보드) 이 side를 대상으로 삼는다.
+  // pane에 마우스가 들어오거나 휠/클릭하면 갱신된다 — 기본값은 'left'.
+  let lastActiveSide = 'left';
+
   for (const side of SIDES) {
+    panes[side].addEventListener('mouseenter', () => { lastActiveSide = side; });
+    panes[side].addEventListener('pointerdown', () => { lastActiveSide = side; });
     viewers[side].el.addEventListener('scroll', () => onScroll(side));
     viewers[side].onPageChange(() => emit());
     // Ctrl(또는 trackpad 핀치) + 휠 → 줌. 브라우저 기본 페이지 줌 차단 위해 passive:false + preventDefault.
     viewers[side].el.addEventListener('wheel', (e) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      zoom(e.deltaY < 0 ? 1 : -1);
+      lastActiveSide = side;
+      zoom(e.deltaY < 0 ? 1 : -1, side);
     }, { passive: false });
   }
 
@@ -229,11 +236,20 @@ export function createDualView(hostEl) {
     if (on) applyFit(); else emit();
   }
 
-  function zoom(delta) {
-    fitWidth = false; // 사용자가 배율을 직접 정했으므로 fit 해제
-    const cur = baseScale();
-    const next = Math.max(0.25, Math.min(5, cur * (delta > 0 ? 1.1 : 1 / 1.1)));
-    if (next === cur) return;
+  // side 생략 시(버튼·키보드) lastActiveSide를 대상으로 삼는다.
+  // Sync ON  → 기존처럼 로드된 양쪽 모두. side 인자는 무시된다.
+  // Sync OFF → 지정된(또는 lastActiveSide) 한쪽만.
+  // 각 side는 항상 "자기" 현재 배율에서 한 스텝 움직인다 — Sync OFF에서 각자 줌한 뒤 다시
+  // Sync를 켠 경우처럼 두 배율이 이미 달랐어도, 이 함수가 그걸 하나로 맞추지는 않는다.
+  function zoom(delta, side) {
+    fitWidth = false; // 사용자가 배율을 직접 정했으므로 fit 해제 (전역 상태)
+    const targets = syncEnabled ? loadedSides() : [side || lastActiveSide].filter((s) => loaded[s]);
+    if (!targets.length) return;
+
+    const factor = delta > 0 ? 1.1 : 1 / 1.1;
+    const next = {};
+    for (const s of targets) next[s] = Math.max(0.25, Math.min(5, viewers[s].getScale() * factor));
+    if (targets.every((s) => next[s] === viewers[s].getScale())) return; // 전부 경계라 변화 없음
 
     // 가로 중앙 기준 확대/축소.
     // 그냥 두면 왼쪽이 고정된 채 커진다: 페이지가 컨테이너보다 넓어지는 순간 .pdfViewer .page의
@@ -241,22 +257,22 @@ export function createDualView(hostEl) {
     // 그래서 컨테이너 콘텐츠 좌표가 아니라 "페이지 안에서의 위치(0~1)"를 기준으로 삼는다
     // — 페이지가 좁을 땐 가운데 정렬돼 원점이 움직이므로, 콘텐츠 좌표로는 계산이 어긋난다.
     const anchor = {};
-    for (const side of loadedSides()) {
-      const el = viewers[side].el;
-      const page = viewers[side].pageDiv();
+    for (const s of targets) {
+      const el = viewers[s].el;
+      const page = viewers[s].pageDiv();
       if (!page?.offsetWidth) continue;
-      anchor[side] = (el.scrollLeft + el.clientWidth / 2 - page.offsetLeft) / page.offsetWidth;
+      anchor[s] = (el.scrollLeft + el.clientWidth / 2 - page.offsetLeft) / page.offsetWidth;
     }
 
-    for (const side of SIDES) viewers[side].setScale(next);
+    for (const s of targets) viewers[s].setScale(next[s]);
 
-    for (const side of loadedSides()) {
-      if (anchor[side] === undefined) continue;
-      const el = viewers[side].el;
-      const page = viewers[side].pageDiv();
+    for (const s of targets) {
+      if (anchor[s] === undefined) continue;
+      const el = viewers[s].el;
+      const page = viewers[s].pageDiv();
       if (!page?.offsetWidth) continue;
       // 범위를 벗어난 값은 브라우저가 [0, 최대] 로 알아서 클램프한다.
-      el.scrollLeft = page.offsetLeft + anchor[side] * page.offsetWidth - el.clientWidth / 2;
+      el.scrollLeft = page.offsetLeft + anchor[s] * page.offsetWidth - el.clientWidth / 2;
     }
     realign();
     emit();
@@ -290,8 +306,10 @@ export function createDualView(hostEl) {
   async function switchSides() {
     const pages = { left: viewers.left.currentPage(), right: viewers.right.currentPage() };
     const docs = { left: viewers.left.getDoc(), right: viewers.right.getDoc() };
-    // setDocument가 배율을 초기화하므로 교체 전에 읽어둔다 (교체 후 baseScale은 초기화된 값을 집는다).
-    const scale = fitWidth ? null : baseScale();
+    // setDocument가 배율을 초기화하므로 교체 전에 "양쪽 각각의" 배율을 읽어둔다.
+    // 문서가 좌우로 맞바뀌므로 배율도 그 문서를 따라간다 — Sync OFF로 두 배율이 서로
+    // 달랐어도 여기서 하나로 합치지 않는다.
+    const scales = fitWidth ? null : { left: viewers.left.getScale(), right: viewers.right.getScale() };
     if (!docs.left && !docs.right) return;
 
     const keys = { left: marks.left.getDoc(), right: marks.right.getDoc() };
@@ -303,8 +321,14 @@ export function createDualView(hostEl) {
     marks.left.setDoc(keys.right); // 마커도 문서를 따라 반대편으로
     marks.right.setDoc(keys.left);
 
-    if (fitWidth) for (const s of loadedSides()) viewers[s].setScaleValue('page-width');
-    else for (const s of loadedSides()) viewers[s].setScale(scale);
+    if (fitWidth) {
+      for (const s of loadedSides()) viewers[s].setScaleValue('page-width');
+    } else {
+      // 원래 left 문서(이제 right에 있음)는 scales.left를, 원래 right 문서(이제 left)는
+      // scales.right를 그대로 물려받는다 — 배율이 side가 아니라 문서를 따라간다.
+      if (loaded.left) viewers.left.setScale(scales.right);
+      if (loaded.right) viewers.right.setScale(scales.left);
+    }
 
     for (const side of loadedSides()) {
       const p = pages[other(side)];

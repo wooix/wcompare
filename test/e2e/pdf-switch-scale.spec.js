@@ -51,6 +51,45 @@ test('Switch: 사용자가 정한 줌 배율이 좌우 교체 후에도 유지�
   fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
 });
 
+test('Switch (Sync OFF): 배율은 side가 아니라 문서를 따라 좌우로 맞바뀐다', async () => {
+  const { a, b } = writePair('swoff' + Date.now());
+  const app = await electron.launch({ args: [MAIN, a, b] });
+  const win = await app.firstWindow();
+  await win.waitForSelector(`${rightC} canvas`, { timeout: 20000 });
+
+  await win.click('#btn-sync');
+  await expect(win.locator('#btn-sync')).toHaveText('Sync: OFF');
+
+  const overflowX = (sel) => win.evaluate((s) => {
+    const el = document.querySelector(s);
+    return el.scrollWidth - el.clientWidth;
+  }, sel);
+  const leftC = '.pdf-pane[data-side=left] .pdf-container';
+
+  // 왼쪽 문서만 확대 — Sync OFF이므로 오른쪽은 그대로여야 한다
+  for (let i = 0; i < 4; i++) {
+    await win.evaluate((sel) => document.querySelector(sel).dispatchEvent(
+      new WheelEvent('wheel', { deltaY: -120, ctrlKey: true, bubbles: true, cancelable: true }),
+    ), leftC);
+  }
+  await win.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    return (el.scrollWidth - el.clientWidth) > 10;
+  }, leftC, { timeout: 5000 });
+  expect(await overflowX(rightC)).toBeLessThanOrEqual(1);
+
+  await win.click('#btn-switch');
+  await win.waitForSelector(`${rightC} canvas`, { timeout: 20000 });
+  await win.waitForTimeout(400); // setScale/emit 반영 여유
+
+  // 확대했던 문서는 이제 right에 있으니 right가 커져 있어야 하고, left는 원래(작은) 배율이어야 한다
+  expect(await overflowX(rightC)).toBeGreaterThan(10);
+  expect(await overflowX(leftC)).toBeLessThanOrEqual(1);
+
+  await app.close();
+  fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
+});
+
 test('Switch: Fit ON 상태에서는 교체 후에도 Fit이 유지된다', async () => {
   const { a, b } = writePair('fiton' + Date.now());
   const app = await electron.launch({ args: [MAIN, a, b] });
