@@ -30,6 +30,62 @@ function createBusy(paneEl) {
   };
 }
 
+// 문서가 없는 pane에 겹쳐 두는 "URL로 PDF 열기" 입력.
+// 다운로드는 main이 하므로 여기서는 URL 문자열을 넘기고 진행/오류 표시만 맡는다.
+// 표시·숨김은 CSS(.pdf-pane.loaded .pdf-url { display:none })가 처리한다 —
+// 로드 상태를 JS로 이중 관리하지 않아 열기·닫기·switch 세 경로가 자동으로 일관된다.
+function createUrlPanel(paneEl, submit) {
+  const el = document.createElement('div');
+  el.className = 'pdf-url';
+  const title = document.createElement('div');
+  title.className = 'pdf-url-title';
+  title.textContent = 'URL로 PDF 열기';
+  const row = document.createElement('div');
+  row.className = 'pdf-url-row';
+  const input = document.createElement('input');
+  input.className = 'pdf-url-input';
+  input.type = 'text';
+  input.spellcheck = false;
+  input.placeholder = 'https://example.com/paper.pdf';
+  const go = document.createElement('button');
+  go.className = 'pdf-url-go';
+  go.textContent = '열기';
+  row.append(input, go);
+  const msg = document.createElement('div');
+  msg.className = 'pdf-url-msg';
+  const hint = document.createElement('div');
+  hint.className = 'pdf-url-hint';
+  hint.textContent = '파일을 끌어다 놓거나 Open Left로 열 수도 있습니다';
+  el.append(title, row, msg, hint);
+  paneEl.appendChild(el);
+
+  let pending = false;
+  async function run() {
+    if (pending) return; // 중복 제출 방지 (Enter 연타 / 버튼 더블클릭)
+    const url = input.value.trim();
+    if (!url) { input.focus(); return; }
+    pending = true;
+    msg.textContent = '';
+    input.disabled = go.disabled = true;
+    try {
+      await submit(url);
+      input.value = ''; // 성공했을 때만 비운다 — 실패하면 고쳐서 다시 시도할 수 있게 남긴다
+    } catch (e) {
+      msg.textContent = e?.message || String(e);
+    } finally {
+      pending = false;
+      input.disabled = go.disabled = false;
+    }
+  }
+  go.addEventListener('click', run);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); run(); }
+    else if (e.key === 'Escape') { e.preventDefault(); input.value = ''; msg.textContent = ''; }
+  });
+  input.addEventListener('input', () => { msg.textContent = ''; }); // 고쳐 쓰는 중에 옛 오류가 남지 않게
+  return { focus: () => input.focus(), reset: () => { msg.textContent = ''; } };
+}
+
 export function createDualView(hostEl) {
   const other = (s) => (s === 'left' ? 'right' : 'left');
   const SIDES = ['left', 'right'];
@@ -38,13 +94,22 @@ export function createDualView(hostEl) {
   const busy = {};
   const marks = {};
   const outlines = {};
+  // 두 pane을 감싸는 열. 요약 패널이 #pdfview의 형제로 들어와도 `.pdf-pane:last-child`
+  // (= 오른쪽 pane을 가려내는 선택자)가 깨지지 않도록 격리하는 것이 목적이다.
+  const panesWrap = document.createElement('div');
+  panesWrap.className = 'pdf-panes';
+  hostEl.appendChild(panesWrap);
+  // URL 입력은 왼쪽 pane에만 둔다(요구사항). 배열 하나만 늘리면 오른쪽에도 그대로 생긴다.
+  const URL_SIDES = ['left'];
+  const urlPanels = {};
+  const urlCbs = [];
   // 마커는 side가 아니라 "문서"에 묶는다 → switch 해도 마커가 문서를 따라간다.
   const markerStore = new Map(); // 문서경로 -> 마커[]
   for (const side of SIDES) {
     const pane = document.createElement('div');
     pane.className = 'pdf-pane';
     pane.dataset.side = side;
-    hostEl.appendChild(pane);
+    panesWrap.appendChild(pane);
     panes[side] = pane;
     // 목차 드로어는 뷰어를 "겹치지 않고" flex 2열로 밀어낸다 — 겹치면 page-width 페이지의
     // 왼쪽이 가려지므로, 열고 닫을 때 applyFit으로 폭을 다시 계산한다.
@@ -63,6 +128,7 @@ export function createDualView(hostEl) {
     viewers[side] = createPdfViewer(viewerHost);
     marks[side] = createMarkerLayer(viewers[side], markerStore);
     busy[side] = createBusy(pane); // 뷰어 뒤에 붙여 위에 겹치게
+    if (URL_SIDES.includes(side)) urlPanels[side] = createUrlPanel(pane, (url) => openUrl(side, url));
   }
 
   let syncEnabled = true;
@@ -72,10 +138,17 @@ export function createDualView(hostEl) {
   const loaded = { left: false, right: false };
   const stateCbs = [];
 
+  // 보기 형태(요약형)에서 오른쪽 pane을 CSS로 숨기면 clientHeight/clientWidth가 0이 된다.
+  // 그 상태로 비율 스크롤 동기나 page-width 계산을 돌리면 0으로 나눈 값이 흘러들어가므로,
+  // 숨은 pane은 계산에서 아예 빼고 다시 드러나는 순간 재계산한다.
+  const hidden = { left: false, right: false };
+  const isVisible = (s) => loaded[s] && !hidden[s];
   const loadedSides = () => SIDES.filter((s) => loaded[s]);
+  const visibleSides = () => SIDES.filter(isVisible);
+  const bothVisible = () => isVisible('left') && isVisible('right');
   // 배율은 반드시 "로드된" 쪽에서 읽는다 — 빈 뷰어의 기본 배율을 집으면 엉뚱한 값이 된다.
   const baseScale = () => {
-    const s = loadedSides()[0];
+    const s = visibleSides()[0] || loadedSides()[0];
     return (s && viewers[s].getScale()) || 1;
   };
 
@@ -102,12 +175,12 @@ export function createDualView(hostEl) {
   }
 
   function realign() {
-    if (syncEnabled && loaded.left && loaded.right) requestAnimationFrame(() => align('left'));
+    if (syncEnabled && bothVisible()) requestAnimationFrame(() => align('left'));
   }
 
   function onScroll(fromSide) {
     if (!syncEnabled || syncing) return;
-    if (!loaded.left || !loaded.right) return;
+    if (!bothVisible()) return;
     syncing = true;
     align(fromSide);
     requestAnimationFrame(() => { syncing = false; });
@@ -207,8 +280,20 @@ export function createDualView(hostEl) {
   });
 
   function applyFit() {
-    for (const side of loadedSides()) viewers[side].setScaleValue('page-width');
+    // 숨은 pane은 폭이 0이라 page-width가 무의미한 배율을 만든다 → 드러날 때 setPaneVisible이 다시 부른다.
+    for (const side of visibleSides()) viewers[side].setScaleValue('page-width');
     realign();
+    emit();
+  }
+
+  // 보기 형태 전환에서 pane을 감추거나 되살린다. 표시 자체는 CSS(레이아웃 클래스)가 하고
+  // 여기서는 "계산에서 뺀다"는 사실만 관리한다 — 다시 드러날 때 fit을 재계산해야
+  // 폭 0으로 굳어 버린 배율이 남지 않는다.
+  function setPaneVisible(side, on) {
+    const next = !on;
+    if (hidden[side] === next) return;
+    hidden[side] = next;
+    if (fitWidth) applyFit(); else realign();
     emit();
   }
 
@@ -225,9 +310,21 @@ export function createDualView(hostEl) {
     emit();
   }
 
+  // 등록된 핸들러(app.js)가 다운로드(main IPC)와 열기를 맡는다. 진행 중에는 번역과 같은
+  // busy 오버레이로 pane을 덮어 상태를 알리고, 오류는 그대로 던져 URL 패널이 표시하게 둔다.
+  async function openUrl(side, url) {
+    if (!urlCbs.length) throw new Error('URL 열기 준비가 되지 않았습니다');
+    busy[side]({ title: 'PDF 다운로드 중…', sub: url, hint: '받는 즉시 이 화면에 표시됩니다' });
+    try {
+      for (const cb of urlCbs) await cb(side, url);
+    } finally {
+      busy[side](null);
+    }
+  }
+
   function setSync(on) {
     syncEnabled = on;
-    if (on && loaded.left && loaded.right) align('left');
+    if (on && bothVisible()) align('left');
     emit();
   }
 
@@ -298,6 +395,7 @@ export function createDualView(hostEl) {
     panes[side].classList.remove('outline-open');
     hist.back.length = 0; // 히스토리 위치는 문서 기준이라 무효 (switch와 동일)
     hist.fwd.length = 0;
+    urlPanels[side]?.reset(); // 다시 드러나는 URL 패널에 지난 오류가 남지 않게
     refind();
     emit();
   }
@@ -520,6 +618,9 @@ export function createDualView(hostEl) {
   return {
     openSide,
     closeSide,
+    // URL 열기 핸들러 등록 — cb(side, url)이 던진 오류 메시지가 그대로 URL 패널에 표시된다.
+    onOpenUrl: (cb) => urlCbs.push(cb),
+    focusUrl: (side = 'left') => urlPanels[side]?.focus(),
     setSync,
     setFit,
     zoom,
@@ -541,6 +642,13 @@ export function createDualView(hostEl) {
     setOutline,
     isOutline: () => outlineOpen,
     getFullText: (side) => viewers[side].getFullText(),
+    // 요약 재료 — 페이지별 텍스트·제목·목차를 한 side에서 뽑는다. dest→페이지 변환은 pdf.js
+    // 문서 객체가 있어야 하므로 뷰어를 지나 노출한다(app.js가 목차를 페이지 범위로 환산할 때 쓴다).
+    getPageTexts: (side) => viewers[side].getPageTexts(),
+    getTitle: (side) => viewers[side].getTitle(),
+    getOutlineOf: (side) => viewers[side].getOutline(),
+    destToPage: (side, dest) => viewers[side].destToPage(dest),
+    setPaneVisible,
     setBusy: (side, state) => busy[side](state),
     onState: (cb) => stateCbs.push(cb),
     isSync: () => syncEnabled,

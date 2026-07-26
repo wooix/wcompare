@@ -40,7 +40,12 @@ const get = () => inst().get();
 const set = (patch) => inst().set(patch);
 
 // 보관 폴더 하위의 종류별 디렉터리를 보장하고 그 경로를 돌려준다.
-const SUBDIRS = { documents: 'documents', translations: 'translations', projects: 'projects', markers: 'markers' };
+// downloads: URL로 받은 PDF를 두는 곳 — 원본이 로컬에 없으므로 여기 파일이 곧 원본이다.
+// summaries: 논문 요약 캐시 — LLM 호출이 느리고 비싸서 같은 논문을 다시 열면 즉시 복원해야 한다.
+const SUBDIRS = {
+  documents: 'documents', translations: 'translations', projects: 'projects',
+  markers: 'markers', downloads: 'downloads', summaries: 'summaries',
+};
 function dirFor(kind) {
   const sub = SUBDIRS[kind];
   if (!sub) throw new Error(`알 수 없는 보관 폴더 종류: ${kind}`);

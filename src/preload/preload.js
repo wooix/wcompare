@@ -8,8 +8,17 @@ contextBridge.exposeInMainWorld('wcompare', {
   lint: (payload) => ipcRenderer.invoke('lint:run', payload),
   pdfContextMenu: (flags) => ipcRenderer.invoke('ui:pdf-context-menu', flags),
   copyText: (text) => ipcRenderer.invoke('clipboard:writeText', text),
+  // URL로 PDF 열기: 렌더러는 URL 문자열만 넘긴다 — 다운로드·저장 위치·경로 등록은 전부 main이 한다.
+  openPdfUrl: (url) => ipcRenderer.invoke('pdf:open-url', url),
   translatePdf: (payload) => ipcRenderer.invoke('pdf:translate', payload),
   cancelTranslate: () => ipcRenderer.invoke('pdf:translate:cancel'),
+  // 논문 요약: 본문 텍스트는 렌더러가 뽑아 보낸다(pdf.js가 렌더러에만 있다). 경로는 main이 검문한다.
+  summarize: (payload) => ipcRenderer.invoke('pdf:summarize', payload),
+  cancelSummarize: () => ipcRenderer.invoke('pdf:summarize:cancel'),
+  summary: {
+    load: (path) => ipcRenderer.invoke('summary:load', path),
+    save: (path, parts, meta) => ipcRenderer.invoke('summary:save', path, parts, meta),
+  },
   onTranslateProgress: (cb) => ipcRenderer.on('pdf:translate:progress', (_e, d) => cb(d)),
   // 드롭된 File에서 OS 경로 추출 (최신 Electron은 File.path 제거 → webUtils 사용)
   getDropPath: (file) => { try { return webUtils.getPathForFile(file); } catch { return file?.path || null; } },

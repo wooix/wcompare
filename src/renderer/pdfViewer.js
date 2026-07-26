@@ -85,10 +85,12 @@ export function createPdfViewer(hostEl) {
   }
   function findClose() { eventBus.dispatch('findbarclose', { source: null }); }
 
-  // 문서 전체 텍스트. 렌더 여부와 무관하게 getTextContent로 뽑는다
+  // 페이지별 텍스트 배열(0-based: [0]이 1페이지). 렌더 여부와 무관하게 getTextContent로 뽑는다
   // — 화면 밖 페이지의 textLayer는 pdf.js가 버퍼(기본 10) 밖에서 파괴하므로 DOM에 기댈 수 없다.
-  async function getFullText() {
-    if (!doc) return '';
+  // 페이지 경계를 유지하는 이유: 절별 요약은 목차의 페이지 범위로 본문을 잘라야 해서,
+  // 통짜 문자열로 합쳐 버리면 "이 절이 몇 페이지에 있는지"를 되찾을 수 없다.
+  async function getPageTexts() {
+    if (!doc) return [];
     const pages = [];
     for (let i = 1; i <= doc.numPages; i++) {
       const page = await doc.getPage(i);
@@ -100,7 +102,42 @@ export function createPdfViewer(hostEl) {
       }
       pages.push(out);
     }
-    return pages.join('\n\n');
+    return pages;
+  }
+
+  // 문서 전체 텍스트 — 페이지 배열을 빈 줄로 이어 붙인 것(기존 '전체 텍스트 복사' 계약 유지).
+  async function getFullText() {
+    return (await getPageTexts()).join('\n\n');
+  }
+
+  // 목차 항목의 dest → 1-based 페이지 번호. pdf.js의 PDFLinkService.goToDestination이 내부에서
+  // 쓰는 것과 같은 절차다: 명명된 목적지(문자열)는 getDestination으로 explicit 배열을 얻고,
+  // 그 첫 원소(Ref)를 getPageIndex에 넘긴다. 끊어진 링크·그룹핑용 항목은 null —
+  // 호출자는 그 절을 "페이지 매핑 없음"으로 취급하면 된다(요약 흐름을 예외로 끊지 않는다).
+  async function destToPage(dest) {
+    if (!doc || !dest) return null;
+    try {
+      const explicit = typeof dest === 'string' ? await doc.getDestination(dest) : dest;
+      if (!Array.isArray(explicit) || !explicit.length) return null;
+      const ref = explicit[0];
+      if (ref && typeof ref === 'object') return (await doc.getPageIndex(ref)) + 1;
+      if (Number.isInteger(ref)) return ref + 1; // 페이지 인덱스가 직접 들어 있는 형태
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // 논문 제목 — 요약 프롬프트의 앵커로 쓴다. 메타데이터가 비어 있는 PDF가 흔하므로 실패는 빈 문자열.
+  async function getTitle() {
+    if (!doc) return '';
+    try {
+      const { info } = await doc.getMetadata();
+      const t = info?.Title;
+      return typeof t === 'string' ? t.trim() : '';
+    } catch {
+      return '';
+    }
   }
 
   return {
@@ -130,6 +167,9 @@ export function createPdfViewer(hostEl) {
     onFind: (cb) => findCbs.push(cb),
     onLinkNav: (cb) => navCbs.push(cb),
     getFullText,
+    getPageTexts,
+    getTitle,
+    destToPage,
     // 목차. goToDestination은 위의 몽키패치를 지나므로 링크 히스토리(뒤로/앞으로)가 그대로 작동한다.
     getOutline: () => (doc ? doc.getOutline() : Promise.resolve(null)),
     goToDest: (dest) => { if (dest) linkService.goToDestination(dest); },

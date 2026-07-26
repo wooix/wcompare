@@ -8,7 +8,12 @@
 <link rel="stylesheet" href="./pdf_viewer.css" />
 <style>
   html, body { margin: 0; height: 100%; background:#1e1e1e; }
-  #toolbar { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: #1e1e1e; color: #ddd; font: 13px sans-serif; }
+  /* 컨트롤이 많아 1280px 창에서는 가로가 빠듯하다. 줄바꿈을 막지 않으면 버튼 라벨이 한 글자씩
+     세로로 접혀 읽을 수 없게 되므로, 접히는 대신 툴바가 가로로 스크롤되게 한다. */
+  #toolbar { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: #1e1e1e; color: #ddd; font: 13px sans-serif; overflow-x: auto; overflow-y: hidden; }
+  #toolbar::-webkit-scrollbar { height: 0; }
+  #toolbar > *, #pdf-controls > *, #diff-controls > * { flex: 0 0 auto; }
+  #toolbar button, #toolbar span { white-space: nowrap; }
   #toolbar button { background: #333; color: #ddd; border: 1px solid #555; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
   #toolbar button:hover { background: #444; }
   #toolbar button:disabled { opacity: 0.4; cursor: default; background: #333; }
@@ -23,8 +28,23 @@
   #diff-wrap { display:flex; }
   #editor { flex:1; min-width:0; height:100%; }
   #pdfview { display:none; }
+  /* #pdfview는 [두 pane을 감싼 .pdf-panes] + [요약 패널 .pdf-summary] 2열이다.
+     요약 패널을 .pdf-pane의 형제로 바로 넣지 않는 이유: 아래 `.pdf-pane:last-child`가
+     오른쪽 pane을 가려내는 선택자라, 세 번째 형제가 생기면 그 판별이 통째로 어긋난다. */
+  .pdf-panes { flex:1; display:flex; min-width:0; }
   .pdf-pane { flex:1; position:relative; min-width:0; border-right:1px solid #333; display:flex; }
   .pdf-pane:last-child { border-right:none; }
+
+  /* 보기 형태 3종 — 어떤 열을 보여줄지만 CSS로 끊는다. 문서 로드 상태는 건드리지 않으므로
+     형태를 오가도 열려 있던 PDF·마커·스크롤 위치가 그대로 유지된다.
+     숨긴 pane은 폭이 0이라 비율 동기·page-width 계산에서 빼야 한다 → dualView.setPaneVisible 참고. */
+  #pdfview.layout-compare .pdf-summary { display:none; }
+  #pdfview.layout-summary .pdf-pane[data-side=right] { display:none; }
+  #pdf-layout { display:inline-flex; }
+  #pdf-layout button { border-radius:0; }
+  #pdf-layout button:first-child { border-radius:4px 0 0 4px; }
+  #pdf-layout button:last-child { border-radius:0 4px 4px 0; }
+  #pdf-layout button + button { border-left:none; }
 
   /* Markdown TOC 드로어 — #diff-wrap의 좌/우 flex 자식. DOM 순서(left, editor, right)로
      오른쪽 드로어가 창의 오른쪽 끝에 온다. 표시/숨김은 .show 클래스로 제어.
@@ -93,10 +113,91 @@
     border-radius:50%; animation:pdf-spin 0.9s linear infinite; }
   @keyframes pdf-spin { to { transform:rotate(360deg); } }
   .pdf-busy-title { font-size:14px; color:#fff; }
-  .pdf-busy-sub { color:#9cdcfe; font:12px monospace; }
+  /* 번역은 "n / N 페이지"처럼 짧지만 URL 다운로드는 긴 주소가 들어온다 → 넘치지 않게 접는다. */
+  .pdf-busy-sub { color:#9cdcfe; font:12px monospace; max-width:90%; word-break:break-all; }
   .pdf-busy-bar { width:min(260px, 70%); height:4px; background:#444; border-radius:2px; overflow:hidden; }
   .pdf-busy-bar > i { display:block; height:100%; background:#9cdcfe; width:0; transition:width .3s; }
   .pdf-busy-hint { color:#888; font-size:11px; }
+  /* 빈 pane의 "URL로 PDF 열기" — 문서가 로드되면 CSS만으로 사라진다(.loaded는 dualView가 붙인다).
+     컨테이너는 pointer-events:none 이라 빈 영역의 드래그&드롭을 가로막지 않고,
+     실제로 조작할 입력 행만 pointer-events를 되살린다. */
+  .pdf-url { position:absolute; inset:0; z-index:2; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:8px; padding:16px;
+    color:#bbb; font:13px sans-serif; text-align:center; pointer-events:none; }
+  .pdf-pane.loaded .pdf-url { display:none; }
+  .pdf-url-title { color:#999; }
+  .pdf-url-row { display:flex; gap:6px; pointer-events:auto; }
+  .pdf-url-input { width:min(380px, 46vw); background:#222; color:#ddd; border:1px solid #555;
+    border-radius:4px; padding:5px 8px; font:13px sans-serif; }
+  .pdf-url-input:focus { outline:none; border-color:#0a84ff; }
+  .pdf-url-go { background:#333; color:#ddd; border:1px solid #555; border-radius:4px;
+    padding:5px 12px; cursor:pointer; font:13px sans-serif; }
+  .pdf-url-go:hover { background:#444; }
+  .pdf-url-input:disabled, .pdf-url-go:disabled { opacity:0.4; cursor:default; }
+  .pdf-url-msg { color:#f48771; font-size:11px; max-width:90%; min-height:14px; word-break:break-word; }
+  .pdf-url-hint { color:#666; font-size:11px; }
+  /* ===== 논문 요약 패널 (세 번째 열) =====
+     빈 상태(.sum-empty)·진행(.sum-busy)은 패널 위에 겹치는 오버레이라 .pdf-summary가 기준 박스가 된다.
+     주의: .sum-empty/.sum-busy/.sum-err는 JS가 inline display를 직접 세운다(표시 여부는 JS 소관) →
+     여기서는 display를 쓰지 않고 정렬만 잡는다. 그렇지 않으면 CSS 선언이 조용히 무시된다. */
+  .pdf-summary { position:relative; flex:0 0 clamp(300px, 30%, 560px); min-width:0;
+    display:flex; flex-direction:column; border-left:1px solid #333;
+    background:#232323; color:#ddd; font:13px sans-serif; }
+  .sum-tabs { display:flex; align-items:center; gap:4px; padding:6px; border-bottom:1px solid #333; }
+  .sum-tab { background:#2c2c2c; color:#bbb; border:1px solid #484848; border-radius:4px;
+    padding:3px 10px; cursor:pointer; font:12px sans-serif; }
+  .sum-tab:hover { background:#383838; }
+  .sum-tab.on { background:#0a84ff; border-color:#0a84ff; color:#fff; } /* 툴바 토글과 같은 강조 관용구 */
+  .sum-regen { margin-left:auto; background:#333; color:#bbb; border:1px solid #555;
+    border-radius:4px; padding:3px 8px; cursor:pointer; font:11px sans-serif; }
+  .sum-regen:hover { background:#444; }
+  .sum-regen:disabled, .sum-tab:disabled { opacity:0.4; cursor:default; }
+  .sum-body { flex:1; min-height:0; overflow:auto; padding:10px 12px; }
+  /* 필수: 흐름도는 pane이 실제 폭을 가질 때만 렌더된다(mermaid가 폭을 재야 한다) →
+     활성 pane은 반드시 display:block 이어야 하고, 비활성은 display:none 이어야 한다. */
+  .sum-pane { display:none; }
+  .sum-pane.on { display:block; }
+  .sum-pane[data-kind=flow] svg { max-width:100%; height:auto; }
+  .sum-err { color:#f48771; font-size:12px; margin:8px 0; white-space:pre-wrap; word-break:break-word; }
+  .sum-code { background:#1c1c1c; border:1px solid #444; border-radius:4px; padding:8px;
+    color:#bbb; font:11px monospace; white-space:pre-wrap; word-break:break-all; max-height:40vh; overflow:auto; }
+
+  .sum-empty { position:absolute; inset:0; z-index:2; flex-direction:column;
+    align-items:center; justify-content:center; gap:8px; padding:16px; text-align:center; }
+  .sum-empty-title { color:#999; }
+  .sum-empty-go { background:#333; color:#ddd; border:1px solid #555; border-radius:4px;
+    padding:6px 14px; cursor:pointer; font:13px sans-serif; }
+  .sum-empty-go:hover { background:#444; }
+  .sum-empty-go:disabled { opacity:0.4; cursor:default; }
+  .sum-empty-hint { color:#666; font-size:11px; max-width:90%; }
+
+  /* 진행 오버레이 — pdf-busy와 같은 모양새로 맞춘다(같은 종류의 기다림이라 같아 보여야 한다) */
+  .sum-busy { position:absolute; inset:0; z-index:3; flex-direction:column;
+    align-items:center; justify-content:center; gap:8px; background:#232323e6; padding:16px; text-align:center; }
+  .sum-busy-spin { width:26px; height:26px; border:3px solid #555; border-top-color:#9cdcfe;
+    border-radius:50%; animation:pdf-spin 0.9s linear infinite; }
+  .sum-busy-title { font-size:14px; color:#fff; }
+  .sum-busy-sub { color:#9cdcfe; font:12px monospace; }
+  .sum-busy-bar { width:min(220px, 70%); height:4px; background:#444; border-radius:2px; overflow:hidden; }
+  .sum-busy-bar > i { display:block; height:100%; background:#9cdcfe; width:0; transition:width .3s; }
+  .sum-busy-hint { color:#888; font-size:11px; }
+
+  /* 마크다운 렌더 결과(markdownLite). LLM 출력이라 innerHTML 없이 DOM으로만 만들어진다. */
+  .md-h1, .md-h2, .md-h3, .md-h4, .md-h5, .md-h6 { color:#fff; margin:14px 0 6px; line-height:1.35; }
+  .md-h1 { font-size:17px; } .md-h2 { font-size:15px; } .md-h3 { font-size:14px; }
+  .md-h4, .md-h5, .md-h6 { font-size:13px; color:#ddd; }
+  .sum-pane > .md-h1:first-child, .sum-pane > .md-h2:first-child { margin-top:0; }
+  .md-p { margin:6px 0; line-height:1.65; color:#ddd; }
+  .md-ul, .md-ol { margin:6px 0; padding-left:20px; }
+  .md-li { margin:3px 0; line-height:1.6; }
+  .md-quote { margin:8px 0; padding:2px 0 2px 10px; border-left:3px solid #0a84ff55; color:#bbb; }
+  .md-pre { background:#1c1c1c; border:1px solid #444; border-radius:4px; padding:8px;
+    overflow:auto; margin:8px 0; }
+  .md-code { font:11px monospace; color:#9cdcfe; }
+  .md-icode { background:#1c1c1c; border-radius:3px; padding:1px 4px; font:11px monospace; color:#9cdcfe; }
+  .md-strong { color:#fff; }
+  .md-em { color:#ddd; }
+  .md-hr { border:none; border-top:1px solid #444; margin:12px 0; }
   .pdfViewer .page { margin:8px auto; border:1px solid #444; }
   #statusbars { height: 22px; display: flex; background: #1e1e1e; color: #9cdcfe; font: 12px monospace; }
   #statusbars > div { flex: 1; padding: 0 8px; overflow: hidden; white-space: nowrap; opacity: 0.5; }
@@ -144,6 +245,11 @@
       <button id="btn-find-prev" title="이전 일치 (⇧Enter)">▲</button>
       <button id="btn-find-next" title="다음 일치 (Enter)">▼</button>
       <span id="pdf-find-count"></span>
+      <span id="pdf-layout">
+        <button id="btn-layout-compare" title="원문 | 번역 대조">대조</button>
+        <button id="btn-layout-summary" title="원문 | 논문 요약">요약</button>
+        <button id="btn-layout-full" title="원문 | 번역 | 논문 요약">3분할</button>
+      </span>
       <button id="btn-fit">Fit: ON</button>
       <button id="btn-sync">Sync: ON</button>
       <button id="btn-night" title="야간 모드: PDF 페이지 색 반전">Night: OFF</button>

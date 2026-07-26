@@ -1,5 +1,5 @@
 // src/main/ipc.js
-const { ipcMain, dialog, BrowserWindow, Menu, clipboard } = require('electron');
+const { ipcMain, dialog, BrowserWindow, Menu, clipboard, net } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
@@ -7,6 +7,9 @@ const { readFile, writeFile, readBytes } = require('./fileService.js');
 const { lint } = require('./lint/lintService.js');
 const { translate, outputPathFor, resolveAgyBin, envWithPath, parseModelList } = require('./transpaper.js');
 const { allowed, openedPdfs, normalize, allowPath } = require('./allowlist.js');
+const { downloadPdf } = require('./pdfDownload.js');
+const { summarize, KINDS: SUMMARY_KINDS } = require('./paperSummary.js');
+const summaryStore = require('./summaryStore.js');
 const { triggerShortcutDict } = require('./shortcutDict.js');
 const markerStore = require('./markerStore.js');
 const project = require('./project.js');
@@ -24,6 +27,9 @@ const HIGHLIGHT_COLORS = [
 
 // 창(webContents.id)별 번역 job — 여러 창에서 동시에 서로 다른 PDF를 번역할 수 있다.
 const jobs = createTranslationJobs();
+// 요약 job도 같은 레지스트리를 쓴다. 창을 닫거나 앱을 끝낼 때 자식 프로세스(agy/claude)를
+// 남기지 않으려면 번역과 똑같이 창별로 추적해야 하기 때문 — 아래 cancel* 함수에서 함께 정리한다.
+const summaryJobs = createTranslationJobs();
 
 function readWithPath(p) {
   const meta = readFile(p);
@@ -190,6 +196,21 @@ function registerIpc() {
     return markerStore.load(settings.dirFor('markers'), p);
   });
 
+  // ===== URL로 PDF 열기 =====
+  // 다운로드는 반드시 main이 한다: 렌더러 CSP가 connect-src 'self'라 외부 요청 자체가 막혀 있고,
+  // 무엇보다 "경로를 만들어 내는 주체는 main 하나"라는 allowlist 원칙을 지켜야 한다.
+  // 받은 파일은 보관 폴더 downloads/에 두고 allowPath로 등록한다 → 이후 열기·번역·마커 저장이
+  // 로컬 PDF와 완전히 같은 경로를 지난다. net.fetch를 쓰는 이유는 앱 세션의 프록시·인증서 설정을 따르기 위함.
+  ipcMain.handle('pdf:open-url', async (_e, rawUrl) => {
+    const res = await downloadPdf(rawUrl, {
+      dir: settings.dirFor('downloads'),
+      fetch: (u, opts) => net.fetch(u, opts),
+    });
+    const p = allowPath(res.path);
+    recentFiles.record(p);
+    return { ...res, path: p };
+  });
+
   ipcMain.handle('pdf:translate', async (e, { path: rawPath, force } = {}) => {
     const wc = e.sender;
     const wcId = wc.id;
@@ -225,6 +246,45 @@ function registerIpc() {
   ipcMain.handle('pdf:translate:cancel', (e) => {
     jobs.cancel(e.sender.id);
     return { ok: true };
+  });
+
+  // ===== 논문 요약 =====
+  // 본문 텍스트는 렌더러가 보낸다: PDF 파싱(pdf.js)이 렌더러에만 있고, 이미 로드된 문서에서
+  // 뽑는 편이 main에서 다시 파싱하는 것보다 훨씬 싸다. 경로는 여전히 allowlist로 검문한다
+  // — 경로가 곧 캐시 키이자 "이 세션에서 연 PDF인가"의 근거이기 때문.
+  ipcMain.handle('pdf:summarize', async (e, { path: rawPath, kind, title, outline, text } = {}) => {
+    const wcId = e.sender.id;
+    const p = normalize(rawPath);
+    if (!openedPdfs.has(p)) throw new Error('summarize denied: 이 세션에서 연 PDF가 아닙니다');
+    if (!SUMMARY_KINDS.includes(kind)) throw new Error(`알 수 없는 요약 종류: ${kind}`);
+    if (summaryJobs.has(wcId)) throw new Error('이 창에서 이미 요약이 진행 중입니다');
+
+    const s = settings.get();
+    const job = summarize(kind, { title, outline, text }, { translateSettings: s.translate });
+    summaryJobs.add(wcId, `${p}::${kind}`, job);
+    try {
+      return await job.promise;
+    } finally {
+      summaryJobs.remove(wcId);
+    }
+  });
+
+  ipcMain.handle('pdf:summarize:cancel', (e) => {
+    summaryJobs.cancel(e.sender.id);
+    return { ok: true };
+  });
+
+  // 요약 캐시. 마커와 같은 규율 — save는 미허용 경로면 throw로 명확히 거부하고,
+  // load는 조용히 빈 값을 준다(복원은 열기 직후 자동 실행이라 예외로 흐름을 끊지 않는다).
+  ipcMain.handle('summary:load', (_e, rawPath) => {
+    const p = normalize(rawPath);
+    if (!openedPdfs.has(p)) return { parts: { overview: '', sections: '', flow: '' }, meta: null };
+    return summaryStore.load(settings.dirFor('summaries'), p);
+  });
+  ipcMain.handle('summary:save', (_e, rawPath, parts, meta) => {
+    const p = normalize(rawPath);
+    if (!openedPdfs.has(p)) throw new Error('summary save denied: 이 세션에서 연 PDF가 아닙니다');
+    return summaryStore.save(settings.dirFor('summaries'), p, parts, meta);
   });
 
   // PDF 우클릭 메뉴. 렌더러가 "선택이 있는가 / 이 좌표에 마커가 있는가"만 알려주고,
@@ -272,10 +332,11 @@ function registerIpc() {
   });
 }
 
-// 앱 종료 시 호출 — detached로 띄운 transpaper(및 그 자식 agy/claude)가 살아남지 않도록.
-function cancelTranslation() { jobs.cancelAll(); }
+// 앱 종료 시 호출 — detached로 띄운 transpaper·요약 CLI(및 그 자식 agy/claude)가 살아남지 않도록.
+// 요약도 여기서 함께 정리한다: 같은 detached 관용구라 빠뜨리면 앱을 꺼도 프로세스가 남는다.
+function cancelTranslation() { jobs.cancelAll(); summaryJobs.cancelAll(); }
 
-// 특정 창이 파괴될 때 그 창의 번역만 취소한다(main.js의 webContents 'destroyed' 훅에서 호출).
-function cancelForWebContents(wcId) { jobs.cancel(wcId); }
+// 특정 창이 파괴될 때 그 창의 작업만 취소한다(main.js의 webContents 'destroyed' 훅에서 호출).
+function cancelForWebContents(wcId) { jobs.cancel(wcId); summaryJobs.cancel(wcId); }
 
 module.exports = { registerIpc, allowPath, cancelTranslation, cancelForWebContents };

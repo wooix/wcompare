@@ -41,7 +41,11 @@ async function copyStatic() {
   await cp('src/renderer/index.html', out('renderer/index.html'));
   await cp('node_modules/pdfjs-dist/web/pdf_viewer.css', out('renderer/pdf_viewer.css'));
   await cp('node_modules/pdfjs-dist/web/images', out('renderer/images'), { recursive: true });
-  console.log('[esbuild] copied index.html + pdf_viewer.css + images');
+  // mermaid는 번들에 넣지 않고 파일로 둔다: iife 포맷에선 esbuild가 동적 import를 전부 인라인해
+  // app.js가 11MB → 19MB로 불어나는데, 흐름도 탭은 대부분의 세션에서 아예 열리지 않는다.
+  // 대신 mermaidLoader가 이 파일을 <script>로 1회 주입한다(chunks 참조 없는 자기완결 번들).
+  await cp('node_modules/mermaid/dist/mermaid.min.js', out('renderer/mermaid.min.js'));
+  console.log('[esbuild] copied index.html + pdf_viewer.css + images + mermaid.min.js');
 }
 
 if (watch) {
