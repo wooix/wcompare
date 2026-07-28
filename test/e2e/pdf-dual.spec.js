@@ -332,3 +332,31 @@ test('회귀: 텍스트 2개는 diff 모드', async () => {
   await app.close();
   fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
 });
+
+// 링크는 "있다"만으로 부족하다 — 어디에 있는지 보여야 누를 수 있다.
+// pdf.js 기본값은 평상시 완전 투명이라 본문 글자와 구분되지 않는다.
+test('링크가 평상시에도 눈에 보이고, hover에서 더 진해진다', async () => {
+  const a = path.join(os.tmpdir(), `wc-linkvis-${Date.now()}.pdf`);
+  fs.writeFileSync(a, makePdf(5, { height: 900, linkTo: 4 }));
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a] });
+  const win = await app.firstWindow();
+  await win.waitForSelector(`${leftC} .annotationLayer a`, { timeout: 20000 });
+
+  const link = win.locator(`${leftC} .linkAnnotation`).first();
+  const read = () => link.evaluate((el) => {
+    const s = getComputedStyle(el);
+    const alpha = (c) => Number((c.match(/[\d.]+\)$/) || ['1)'])[0].slice(0, -1));
+    return { bgAlpha: /rgba?\(/.test(s.backgroundColor) ? alpha(s.backgroundColor) : 1,
+             border: parseFloat(s.borderBottomWidth) };
+  });
+
+  const rest = await read();
+  expect(rest.border).toBeGreaterThan(0);   // 밑줄로 자리를 알린다
+  expect(rest.bgAlpha).toBeGreaterThan(0);  // 완전 투명이면 찾을 수 없다
+
+  await link.hover();
+  await expect.poll(async () => (await read()).bgAlpha).toBeGreaterThan(rest.bgAlpha);
+
+  await app.close();
+  fs.rmSync(a, { force: true });
+});
