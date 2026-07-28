@@ -41,47 +41,72 @@ PyMuPDF의 `apply_redactions()` 는 리댁션 사각형과 **겹치는 주석(an
 사실상 전부가 함께 사라집니다. transpaper가 링크를 지우려 한 것이 아니라, 글자를 지우는 함수가
 링크까지 데려간 것입니다.
 
-## 해법
+## 해법 (적용 완료)
 
-리댁션 **전에** 링크를 떠 두었다가 **후에** 되꽂습니다. 페이지 기하(MediaBox·회전)는 리댁션으로
+리댁션 **전에** 링크를 걷어 두었다가 **후에** 되꽂습니다. 페이지 기하(MediaBox·회전)는 리댁션으로
 바뀌지 않으므로 원래 좌표가 그대로 유효합니다 — 실제로 원본과 번역본의 모든 페이지가
 `612x792 r0` 로 동일했습니다.
 
+핵심은 **"그냥 되꽂기"가 아니라 "지우고 되꽂기"** 라는 점입니다. 리댁션은 자기와 겹친 링크만
+지우므로 살아남은 링크가 있고, 저장분을 통째로 되꽂으면 그것들이 **두 벌**이 됩니다.
+페이지 위쪽 절반만 리댁션해 실측한 결과입니다.
+
+| | 링크 수 | 중복 |
+|---|---|---|
+| 리댁션만 | 12 (21개 소실) | 0 |
+| 그냥 되꽂기 | 45 | **12** |
+| 지우고 되꽂기 | 33 | 0 |
+
+앞에 다 지워 두면 리댁션이 무엇을 남겼든 결과가 정확해집니다.
+
 ```diff
++    saved_links = []
++    if targets:
++        try:
++            saved_links = page.get_links()
++            for lk in saved_links:
++                page.delete_link(lk)
++        except Exception:  # noqa: BLE001
++            saved_links = []      # 실패하면 예전 동작(링크 소실)으로 후퇴 — 중복보다는 낫다
+     for b in targets:
+         for ln in (b.lines or []):
+             page.add_redact_annot(fitz.Rect(ln.bbox), fill=False)
+         ...
      if targets:
-+        # apply_redactions()는 리댁션 사각형과 겹치는 주석을 함께 지운다. 인용 링크는 본문 줄 위에
-+        # 정확히 얹혀 있어 사실상 전부가 사라진다. 리댁션 전에 떠 두었다가 뒤에 되꽂는다 —
-+        # 페이지 기하는 리댁션으로 바뀌지 않으므로 원래 좌표가 그대로 유효하다.
-+        saved_links = page.get_links()
          page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
                                graphics=fitz.PDF_REDACT_LINE_ART_NONE)
 +        for lk in saved_links:
-+            page.insert_link(lk)
-         # apply_redactions rebuilds page resources; re-register both fonts so
-         # insert_textbox can find them by name in the next step.
++            try:
++                page.insert_link(lk)
++            except Exception:  # noqa: BLE001 - 링크 하나가 나머지를 망치지 않게
++                pass
          _register()
 ```
 
+회귀 테스트는 `tests/test_render.py::test_render_page_preserves_links` 입니다 — 번역 블록 **안쪽**
+링크(사라졌다가 돌아와야 함)와 **바깥쪽** 링크(살아남되 중복되면 안 됨)를 한 번에 봅니다.
+
 ## 검증 결과
 
-transpaper와 같은 순서(줄 단위 리댁션 → `apply_redactions`)로 전 페이지를 처리하고, 링크 복원
-유무만 바꿔 두 파일을 만들어 비교했습니다(arXiv 2404.19737, 29쪽).
+실제 `transpaper` 를 arXiv 2404.19737(29쪽)에 그대로 돌려 산출물을 pdf.js로 확인했습니다.
 
-| | 링크 수 |
-|---|---|
-| 원본 | 284 |
-| 리댁션만 (현재 transpaper) | **0** |
-| 리댁션 + 링크 복원 (해법) | **284** |
+| | 링크 수 | 목적지 해석 | 중복 |
+|---|---|---|---|
+| 원본 | 284 (내부 276 / 외부 8) | — | — |
+| 고치기 전 번역본 | **9** (내부 1 / 외부 8) | — | — |
+| 고친 뒤 번역본 | **284** (내부 276 / 외부 8) | **276 / 276** | **0** |
 
-"있기만 한" 것으로는 부족하므로, 복원된 파일을 **wcompare가 실제로 쓰는 엔진(pdf.js)** 으로 다시
-열어 쓸 수 있는 상태인지까지 확인했습니다.
-
-```
-외부 URL 링크 8개 · 내부 링크 276개 중 목적지가 실제 페이지로 풀린 것 276개
-```
+"있기만 한" 것으로는 부족하므로 **wcompare가 실제로 쓰는 엔진(pdf.js)** 으로 다시 열어
+목적지가 실제 페이지로 풀리는지까지 확인했고, 번역 자체가 멀쩡한 것도 함께 봤습니다(1쪽 한글 935자).
 
 내부 링크는 `cite.xxx` 같은 이름 목적지(named destination)를 가리키는데, 그 이름표는 문서
 전역의 name tree에 있고 리댁션이 건드리지 않습니다. 그래서 복원한 링크가 그대로 해석됩니다.
+
+### 남는 한계
+
+링크 사각형은 **영어 원문의 위치**입니다. 그 자리에 한국어가 다시 그려지므로 글자 폭이 달라지면
+링크와 글자가 정확히 겹치지는 않습니다. 인용 표시(`[12]`)는 대체로 제자리 근처에 남지만,
+"클릭 지점이 한 글자쯤 어긋날 수 있다"는 것은 감수해야 합니다 — 링크가 아예 없는 것보다는 낫습니다.
 
 ## 함정: `get_links()` 는 검증에 쓰면 안 된다
 
