@@ -1,11 +1,13 @@
 // src/main/ipc.js
-const { ipcMain, dialog, BrowserWindow, Menu, clipboard, net } = require('electron');
+const { ipcMain, dialog, BrowserWindow, Menu, clipboard, net, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const { readFile, writeFile, readBytes } = require('./fileService.js');
 const { lint } = require('./lint/lintService.js');
-const { translate, outputPathFor, resolveAgyBin, envWithPath, parseModelList } = require('./transpaper.js');
+const {
+  translate, outputPathFor, translationCandidates, resolveAgyBin, envWithPath, parseModelList,
+} = require('./transpaper.js');
 const { allowed, openedPdfs, normalize, allowPath } = require('./allowlist.js');
 const { downloadPdf } = require('./pdfDownload.js');
 const { summarize, KINDS: SUMMARY_KINDS } = require('./paperSummary.js');
@@ -34,6 +36,53 @@ const summaryJobs = createTranslationJobs();
 function readWithPath(p) {
   const meta = readFile(p);
   return { path: p, ext: path.basename(p), ...meta };
+}
+
+// ===== 번역본(.ko.pdf) 삭제 =====
+// 지울 파일 이름은 렌더러가 절대 지목하지 못한다. 렌더러는 "이 원본의 번역본"이라고만 말하고,
+// 실제 경로는 여기서 원본 경로로부터 다시 유도한다 — pdf:translate가 출력 경로를 정하는 규칙과
+// 똑같은 규칙을 쓴다. 삭제는 이 앱에서 유일하게 파일을 없애는 동작이라, 경로를 만드는 주체가
+// main 하나뿐이라는 allowlist 원칙이 여기서 가장 중요하다.
+//
+// 후보 자리를 세는 규칙은 transpaper.js의 순수 함수(translationCandidates)에 있다 — 단위 테스트 대상.
+// 여기서는 그 후보 중 실재하는 것만 남긴다. 순서가 중요하다 — 반드시 lstat으로 먼저 걸러낸 뒤에 normalize한다.
+// normalize는 realpath라, 심볼릭 링크를 먼저 통과시키면 링크가 가리키는 "다른 파일"이 삭제 대상이
+// 되어 버린다. lstat().isFile()은 심링크에 false라 그 통로가 막힌다. 디렉터리·소켓도 같이 걸러진다.
+// 살아남은 경로는 normalize해서 돌려준다: 렌더러의 pdfPaths도 같은 정규화를 거친 값이라,
+// 그래야 "지운 파일이 지금 화면에 열려 있는가"를 문자열로 비교할 수 있다(macOS의 /var ↔ /private/var).
+function existingTranslations(srcPath) {
+  return translationCandidates(srcPath, settings.dirFor('translations'))
+    .filter((c) => { try { return fs.lstatSync(c).isFile(); } catch { return false; } })
+    .map((c) => normalize(c));
+}
+
+// 실제 삭제. 휴지통으로 옮긴다 — 수 분짜리 AI 작업의 결과물이라 오조작의 대가가 크고,
+// 되돌릴 길을 남겨 두는 편이 옳다. 실패하면 그대로 throw한다: "휴지통으로 옮긴다"고 물어 놓고
+// 되돌릴 수 없게 지우는 대체 경로는 두지 않는다.
+// WCOMPARE_TEST_TRASH='rm'은 e2e 전용 심이다 — 테스트를 돌릴 때마다 사용자의 휴지통에
+// 테스트 파일이 쌓이면 안 되기 때문(테스트가 사용자 환경을 어지럽히지 않는다는 규율).
+async function removeTranslationFile(target) {
+  if (process.env.WCOMPARE_TEST_TRASH === 'rm') { fs.rmSync(target, { force: true }); return; }
+  await shell.trashItem(target);
+}
+
+// 삭제 재확인. project.js의 덮어쓰기 확인과 같은 테스트 심(WCOMPARE_TEST_CONFIRM)을 쓴다 —
+// e2e에서 모달이 이벤트 루프를 막지 않게. 기본 버튼은 '취소'다: 파괴적 동작을 Enter 한 번에
+// 흘려보내지 않기 위해서.
+async function confirmDeleteTranslation(win, targets) {
+  const forced = process.env.WCOMPARE_TEST_CONFIRM;
+  if (forced === 'delete') return true;
+  if (forced === 'cancel') return false;
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    message: '한국어 번역본을 삭제할까요?',
+    detail: `${targets.map((t) => path.basename(t)).join('\n')}\n\n`
+      + '휴지통으로 옮깁니다. 다시 만들려면 페이지마다 AI를 불러야 해서 수 분이 걸립니다.',
+    buttons: ['휴지통으로 이동', '취소'],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  return response === 0;
 }
 
 // file이 dir 하위(또는 같음)인지. path.relative가 ..로 시작하지 않으면 하위.
@@ -250,6 +299,45 @@ function registerIpc() {
   ipcMain.handle('pdf:translate:cancel', (e) => {
     jobs.cancel(e.sender.id);
     return { ok: true };
+  });
+
+  // 지금 열려 있는 PDF들 중 "번역본이 실제로 있는" 첫 원본을 찾아 알려준다.
+  // 렌더러는 이 결과로 삭제 버튼의 활성 여부와 안내 문구만 정하고, 경로는 다시 넘기지 않는다.
+  // 조회는 조용하다 — 미허용 경로는 예외 대신 건너뛴다(문서를 열고 닫을 때마다 불리는 질의라
+  // 예외를 던지면 정상 흐름이 오류로 시끄러워진다).
+  ipcMain.handle('pdf:translation:info', (_e, rawPaths) => {
+    const list = Array.isArray(rawPaths) ? rawPaths : [rawPaths];
+    for (const raw of list) {
+      if (typeof raw !== 'string' || !raw) continue;
+      const p = normalize(raw);
+      if (!openedPdfs.has(p)) continue;
+      const targets = existingTranslations(p);
+      if (targets.length) return { source: p, targets };
+    }
+    return { source: null, targets: [] };
+  });
+
+  // 번역본 삭제. 받는 것은 "원본 경로" 하나뿐이고 지울 파일은 여기서 유도한다.
+  // 완전 삭제가 아니라 휴지통으로 옮긴다 — 수 분짜리 AI 작업의 결과물이라 오조작의 대가가 크다.
+  // 휴지통이 실패하면 거기서 멈춘다: 되돌릴 수 있다고 물어 놓고 되돌릴 수 없게 지우지 않는다.
+  ipcMain.handle('pdf:translation:delete', async (e, rawPath) => {
+    const p = normalize(rawPath);
+    if (!openedPdfs.has(p)) throw new Error('삭제 거부: 이 세션에서 연 PDF가 아닙니다');
+
+    const targets = existingTranslations(p);
+    if (!targets.length) return { removed: [], canceled: false };
+    // 지금 만들어지고 있는 파일은 지우지 않는다 — 다른 창이 쓰는 중인 출력까지 포함해서 막는다.
+    if (targets.some((t) => jobs.outputInUse(t))) throw new Error('번역이 진행 중인 파일은 삭제할 수 없습니다');
+
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!(await confirmDeleteTranslation(win, targets))) return { removed: [], canceled: true };
+
+    const removed = [];
+    for (const t of targets) {
+      await removeTranslationFile(t); // 실패하면 throw → 렌더러가 사유를 그대로 보여준다
+      removed.push(t);
+    }
+    return { removed, canceled: false };
   });
 
   // ===== 논문 요약 =====

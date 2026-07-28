@@ -13,6 +13,12 @@ contextBridge.exposeInMainWorld('wcompare', {
   openPdfUrl: (url, opts) => ipcRenderer.invoke('pdf:open-url', url, opts),
   translatePdf: (payload) => ipcRenderer.invoke('pdf:translate', payload),
   cancelTranslate: () => ipcRenderer.invoke('pdf:translate:cancel'),
+  // 번역본 조회·삭제. 넘기는 것은 언제나 "원본" 경로다 — 지울 파일 경로는 main이 다시 유도한다.
+  // 렌더러가 삭제 대상을 지목할 수 있으면 그 순간 임의 파일 삭제가 되기 때문.
+  translation: {
+    info: (paths) => ipcRenderer.invoke('pdf:translation:info', paths),
+    remove: (sourcePath) => ipcRenderer.invoke('pdf:translation:delete', sourcePath),
+  },
   // 논문 요약: 본문 텍스트는 렌더러가 뽑아 보낸다(pdf.js가 렌더러에만 있다). 경로는 main이 검문한다.
   summarize: (payload) => ipcRenderer.invoke('pdf:summarize', payload),
   cancelSummarize: () => ipcRenderer.invoke('pdf:summarize:cancel'),

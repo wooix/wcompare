@@ -226,6 +226,7 @@ async function openPdfOrThrow(side, p) {
   await restoreMarkers(side, real);
   await syncSummaryToDoc(); // 요약 대상 문서가 바뀌었을 때만 패널을 갈아 끼운다
   updatePdfBtns();
+  refreshTranslationInfo(); // 열린 문서가 바뀌었으니 "지울 번역본이 있는가"를 다시 묻는다(비동기, 열기를 막지 않는다)
 }
 async function openPdf(side, p) {
   try {
@@ -461,9 +462,56 @@ function showTranslateProgress(sub) {
   });
 }
 
+// 번역본 삭제 — 지울 파일이 있는지는 main만 안다(경로 유도 규칙이 거기에 있다).
+// 렌더러는 그 답을 캐싱해 버튼 상태와 안내 문구에만 쓴다.
+let translationInfo = { source: null, targets: [] };
+let translationInfoRun = 0;
+async function refreshTranslationInfo() {
+  const my = ++translationInfoRun;
+  const paths = loadedPdfSides().map((s) => pdfPaths[s]);
+  let next = { source: null, targets: [] };
+  if (paths.length) {
+    try { next = await window.wcompare.translation.info(paths); }
+    catch { /* 조회 실패는 버튼을 잠그는 것으로 충분하다 — 열기 흐름을 오류로 끊지 않는다 */ }
+  }
+  if (my !== translationInfoRun) return; // 기다리는 사이 문서가 또 바뀌었다 — 늦게 온 답은 버린다
+  translationInfo = next;
+  updatePdfBtns();
+}
+
+async function deleteTranslation() {
+  const { source, targets } = translationInfo;
+  if (translating || !source || !targets.length) return;
+  let res;
+  try {
+    res = await window.wcompare.translation.remove(source);
+  } catch (e) {
+    alert('번역본 삭제 실패: ' + ipcMessage(e));
+    await refreshTranslationInfo(); // 실패 사유가 "이미 없음"일 수도 있으니 상태를 다시 맞춘다
+    return;
+  }
+  if (res.canceled || !res.removed.length) return;
+  // 지운 파일이 화면에 열려 있으면 그 pane을 닫는다 — 없는 파일을 계속 보여줄 수는 없다.
+  // main이 정규화(realpath)한 경로를 돌려주므로 pdfPaths와 그대로 비교된다.
+  for (const side of ['left', 'right']) {
+    if (res.removed.includes(pdfPaths[side])) await closeFile(side);
+  }
+  await refreshTranslationInfo();
+  setStatus(`번역본을 휴지통으로 옮겼습니다: ${res.removed.map((p) => p.split('/').pop()).join(', ')}`);
+}
+
 function updatePdfBtns() {
   const only = loadedPdfSides().length === 1;
   const any = loadedPdfSides().length > 0;
+
+  const d = $('btn-del-translation');
+  if (d) {
+    const n = translationInfo.targets.length;
+    d.disabled = translating || !n;
+    d.title = translating ? '번역 중에는 삭제할 수 없습니다'
+      : n ? `${translationInfo.targets.map((p) => p.split('/').pop()).join(', ')} 을(를) 휴지통으로 옮깁니다`
+        : '지울 한국어 번역본이 없습니다';
+  }
 
   const t = $('btn-translate');
   if (t) {
@@ -640,6 +688,7 @@ async function closeFile(side) {
     pdfPaths[side] = null;
     await syncSummaryToDoc(); // 닫힌 문서가 요약의 주인이었으면 남은 문서로 갈아 끼우고, 없으면 비운다
     updatePdfBtns();
+    refreshTranslationInfo();
   } else {
     if (!(await dirtyGuard(side))) return;
     editorApi.close(side);
@@ -664,6 +713,7 @@ $('btn-sync').onclick = () => dualView?.setSync(!dualView.isSync());
 $('btn-fit').onclick = () => dualView?.setFit(!dualView.isFit());
 $('btn-switch').onclick = () => switchSides();
 $('btn-translate').onclick = (e) => translatePdf(e.altKey); // ⌥+클릭 = 기존 번역본 무시하고 다시 번역
+$('btn-del-translation').onclick = () => deleteTranslation();
 $('btn-back').onclick = () => dualView?.goBack();
 $('btn-forward').onclick = () => dualView?.goForward();
 $('btn-toc').onclick = () => {

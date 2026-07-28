@@ -5,7 +5,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  resolveBin, outputPathFor, isProgressLine, pathDirs, translate, buildTranslateArgs, parseModelList,
+  resolveBin, outputPathFor, translationCandidates, isProgressLine, pathDirs, translate,
+  buildTranslateArgs, parseModelList,
 } = require('../src/main/transpaper.js');
 
 function tmpExec(name) {
@@ -25,6 +26,38 @@ test('outputPathFor: 쓰기 가능한 원본 폴더에는 옆에 .ko.pdf', () =>
 test('outputPathFor: 원본 폴더에 쓸 수 없으면 임시 폴더로', () => {
   // /System 은 SIP로 보호되어 쓰기 불가
   assert.equal(outputPathFor('/System/paper.pdf', '/tmp'), '/tmp/paper.ko.pdf');
+});
+
+// translationCandidates는 "삭제 대상 경로"를 만드는 함수라 규칙이 어긋나면 엉뚱한 파일이 지워진다.
+// 그래서 유도 규칙 자체를 여기서 못 박는다.
+test('translationCandidates: 보관 폴더와 원본 옆, 두 자리를 모두 후보로 준다', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cand-'));
+  const store = path.join(dir, 'storage', 'translations');
+  const got = translationCandidates(path.join(dir, 'paper.pdf'), store);
+  // 설정(keepTranslationsInStorage)은 번역 뒤에 바뀔 수 있으므로 한 자리만 보면 놓친다.
+  assert.deepEqual(got, [path.join(store, 'paper.ko.pdf'), path.join(dir, 'paper.ko.pdf')]);
+});
+
+test('translationCandidates: 보관 폴더가 없으면 원본 옆 한 자리만', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cand1-'));
+  assert.deepEqual(translationCandidates(path.join(dir, 'paper.pdf'), null),
+    [path.join(dir, 'paper.ko.pdf')]);
+});
+
+test('translationCandidates: 두 자리가 같은 경로면 한 번만 (중복 삭제 방지)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cand2-'));
+  // 보관 폴더가 곧 원본 폴더인 경우 — 같은 파일을 두 번 지우려 들면 두 번째에서 실패한다.
+  assert.deepEqual(translationCandidates(path.join(dir, 'paper.pdf'), dir),
+    [path.join(dir, 'paper.ko.pdf')]);
+});
+
+test('translationCandidates: 원본 자신은 결코 후보가 되지 않는다', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cand3-'));
+  // 이미 번역본인 파일을 열어 둔 채 삭제를 눌러도, 보고 있는 그 파일이 대상이 되면 안 된다.
+  const ko = path.join(dir, 'paper.ko.pdf');
+  const got = translationCandidates(ko, dir);
+  assert.ok(!got.includes(ko), `원본이 후보에 들어갔다: ${got.join(', ')}`);
+  assert.deepEqual(got, [path.join(dir, 'paper.ko.ko.pdf')]);
 });
 
 test('isProgressLine: transpaper -v 의 페이지 진행 줄만 인식', () => {

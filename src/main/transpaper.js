@@ -79,6 +79,22 @@ function outputPathFor(input, tmpDir = os.tmpdir()) {
   }
 }
 
+// 한 원본 PDF의 번역본이 놓여 있을 수 있는 자리 전부. 삭제 기능이 쓴다.
+// 한 자리가 아니라 두 자리인 이유: 출력 위치를 정하는 설정(keepTranslationsInStorage)은
+// 번역을 마친 "뒤에" 바뀔 수 있다. 지금 설정이 가리키는 자리만 보면, 예전 설정으로 만든
+// 번역본은 화면에서 지울 방법이 없는 유령으로 남는다.
+// 원본 자신은 결과에서 뺀다 — 유도 규칙상(.pdf → .ko.pdf) 겹칠 수 없지만, 여기서 나온 경로가
+// 곧 삭제 대상이므로 규칙의 안전성에 기대지 않고 못을 박아 둔다.
+function translationCandidates(input, translationsDir, tmpDir = os.tmpdir()) {
+  const cands = [outputPathFor(input, tmpDir)];
+  if (translationsDir) {
+    const base = path.basename(input).replace(/\.pdf$/i, '') + '.ko.pdf';
+    cands.unshift(path.join(translationsDir, base));
+  }
+  const src = path.resolve(input);
+  return [...new Set(cands.map((c) => path.resolve(c)))].filter((c) => c !== src);
+}
+
 // transpaper -v 는 페이지마다 "page N: translated K blocks, M overflowed"를 stdout에 찍는다.
 const PROGRESS_RE = /^page\s+\d+:/;
 const isProgressLine = (line) => PROGRESS_RE.test(line.trim());
@@ -157,6 +173,6 @@ function translate(input, { onProgress, output, env = process.env, translateSett
 }
 
 module.exports = {
-  translate, resolveBin, resolveAgyBin, outputPathFor, isProgressLine, pathDirs, envWithPath,
+  translate, resolveBin, resolveAgyBin, outputPathFor, translationCandidates, isProgressLine, pathDirs, envWithPath,
   buildTranslateArgs, parseModelList, MODEL_NAME_RE, NOT_FOUND_HINT,
 };
