@@ -544,3 +544,45 @@ test('summarize: 알 수 없는 kind와 CLI 부재는 즉시 reject', async () =
     /찾을 수 없습니다/,
   );
 });
+
+// ===== 제어문자 (실제 사용자 신고: arXiv 2203.15556 요약이 통째로 실패) =====
+// pdf.js는 폰트의 ToUnicode 맵이 불완전하면 매핑 안 된 글리프를 제어문자로 흘려보낸다.
+// node의 spawn은 argv에 NUL이 하나라도 있으면 인자를 통째로 거부한다(ERR_INVALID_ARG_VALUE)
+// → 정화하지 않으면 Overview·절별·흐름도가 한꺼번에 실패한다.
+// 소스에 제어문자를 직접 쓰지 않고 코드로 만든다(파일에 보이지 않는 바이트를 남기지 않으려고).
+const NUL = String.fromCharCode(0);
+const BEL = String.fromCharCode(7);
+const DEL = String.fromCharCode(127);
+
+test('제어문자: NUL이 섞인 본문도 프롬프트에서 제거된다', () => {
+  const prompt = buildPrompt('overview', {
+    title: `제${NUL}목`,
+    outline: `1.${BEL} 서론`,
+    text: `본문에 NUL${NUL}이 있고 DEL${DEL}도 있다`,
+  });
+  assert.ok(!prompt.includes(NUL), 'NUL이 남으면 spawn이 거부한다');
+  assert.ok(!prompt.includes(BEL));
+  assert.ok(!prompt.includes(DEL));
+  // 지우지 않고 공백으로 바꾼다 — 지우면 앞뒤 단어가 붙어 뜻이 달라진다
+  assert.ok(prompt.includes('제 목'));
+  assert.ok(prompt.includes('본문에 NUL 이 있고'));
+  // 줄바꿈·탭은 문단 구조라 살아남는다
+  const kept = buildPrompt('overview', { title: 't', outline: null, text: 'a\nb\tc' });
+  assert.ok(kept.includes('a\nb\tc'));
+});
+
+test('제어문자: buildSummaryArgs가 최후 방어선으로 한 번 더 막는다', () => {
+  const args = buildSummaryArgs('agy', `프롬${NUL}프트`, {});
+  assert.ok(!args[1].includes(NUL));
+  assert.equal(args[1], '프롬 프트');
+});
+
+test('제어문자: 정화한 인자를 spawn이 실제로 받아들인다', () => {
+  // "제거됐다"가 아니라 "spawn이 통과시킨다"를 본다 — 원래 결함이 spawn에서 났기 때문이다.
+  const { execFileSync } = require('node:child_process');
+  const args = buildSummaryArgs('agy', `본문${NUL}에 NUL${NUL}이 있다`, {});
+  const out = execFileSync('/bin/echo', [args[1]], { encoding: 'utf8' });
+  assert.match(out, /본문 에 NUL 이 있다/);
+  // 정화 전이라면 여기서 ERR_INVALID_ARG_VALUE가 났을 것이다
+  assert.throws(() => execFileSync('/bin/echo', [`raw${NUL}`]), /null bytes|ERR_INVALID_ARG_VALUE/);
+});

@@ -77,7 +77,10 @@ function resolveEngineBin(engine, env = process.env, extraDirs = undefined) {
 // 모델명은 MODEL_NAME_RE를 통과할 때만 붙인다(빈 값·불량 값은 조용히 생략 = CLI 기본 모델).
 // transpaper.buildTranslateArgs와 같은 정책이어야 사용자가 설정 한 곳만 보고도 결과를 예측할 수 있다.
 function buildSummaryArgs(engine, prompt, translateSettings = {}) {
-  const args = ['-p', String(prompt ?? '')];
+  // 최후 방어선: 여기가 argv로 나가는 마지막 관문이다. 위에서 이미 정화하지만, 프롬프트를
+  // 만드는 경로가 하나 늘어날 때마다 정화를 빠뜨릴 수 있으므로 문지기를 한 번 더 세운다
+  // (NUL이 하나만 섞여도 spawn이 인자를 통째로 거부해 요약 전체가 실패한다).
+  const args = ['-p', stripControlChars(String(prompt ?? ''))];
   const { agyModel, claudeModel } = translateSettings || {};
   const model = engine === 'claude' ? claudeModel : agyModel;
   if (typeof model === 'string' && MODEL_NAME_RE.test(model)) args.push('--model', model);
@@ -91,8 +94,23 @@ const CLIP_MARKER = '\n\n…(본문 중간 생략)…\n\n';
 // 몰려 있고, 가운데(관련 연구·증명·부록)는 상대적으로 덜 중요하다. 앞에서 단순 slice하면 결론과 한계가
 // 통째로 사라져 "저자가 밝힌 한계" 같은 항목을 모델이 지어내게 된다. 그래서 앞 70% + 뒤 30%를 남긴다.
 // 표식 길이를 예산에서 미리 빼므로 결과 길이는 항상 max 이하 → 같은 값을 다시 clip해도 그대로다(멱등).
+// PDF에서 뽑은 텍스트에는 제어문자가 섞여 들어온다 — 폰트의 ToUnicode 맵이 불완전하면
+// pdf.js가 매핑되지 않은 글리프를 그대로 흘려보내기 때문이다.
+// 그중 NUL은 치명적이다: node의 spawn은 argv에 NUL이 하나라도 있으면 인자를 통째로 거부해서
+// (ERR_INVALID_ARG_VALUE) 요약 세 개가 한꺼번에 실패한다. arXiv 2203.15556에서 실제로 발생했다.
+// 줄바꿈·탭은 문단 구조라 살리고, 나머지 제어문자는 공백으로 바꾼다(지우면 단어가 붙어 버린다).
+function stripControlChars(s) {
+  let out = '';
+  for (const ch of s) {
+    const c = ch.codePointAt(0);
+    // C0(개행·탭 제외) + DEL + C1 제어문자
+    out += (c < 32 && c !== 10 && c !== 9) || c === 127 || (c >= 128 && c <= 159) ? ' ' : ch;
+  }
+  return out;
+}
+
 function clipText(text, max = MAX_TEXT_CHARS) {
-  const s = typeof text === 'string' ? text : String(text ?? '');
+  const s = stripControlChars(typeof text === 'string' ? text : String(text ?? ''));
   if (s.length <= max) return { text: s, truncated: false };
   const budget = Math.max(0, max - CLIP_MARKER.length);
   const head = Math.floor(budget * 0.7);
@@ -104,7 +122,7 @@ function clipText(text, max = MAX_TEXT_CHARS) {
 // 제목·목차는 PDF에서 긁어온 값이라 길이 보장이 없다. 프롬프트가 본문보다 메타데이터로 뒤덮이지 않게 자른다.
 function clipField(v, max) {
   if (typeof v !== 'string') return '';
-  const s = v.replace(/\r\n?/g, '\n').trim();
+  const s = stripControlChars(v.replace(/\r\n?/g, '\n')).trim();
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
