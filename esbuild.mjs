@@ -45,7 +45,12 @@ async function copyStatic() {
   // app.js가 11MB → 19MB로 불어나는데, 흐름도 탭은 대부분의 세션에서 아예 열리지 않는다.
   // 대신 mermaidLoader가 이 파일을 <script>로 1회 주입한다(chunks 참조 없는 자기완결 번들).
   await cp('node_modules/mermaid/dist/mermaid.min.js', out('renderer/mermaid.min.js'));
-  console.log('[esbuild] copied index.html + pdf_viewer.css + images + mermaid.min.js');
+  // KaTeX: 수식은 CSS와 웹폰트가 있어야 글자로 보인다. katex.min.css가 fonts/를 **상대경로**로
+  // 참조하므로 같은 폴더 구조 그대로 복사해야 app:// 스킴에서 same-origin이 되어
+  // CSP(font-src 'self')를 통과한다. 폰트를 다른 곳에 두면 수식이 네모로만 뜬다.
+  await cp('node_modules/katex/dist/katex.min.css', out('renderer/katex.min.css'));
+  await cp('node_modules/katex/dist/fonts', out('renderer/fonts'), { recursive: true });
+  console.log('[esbuild] copied index.html + pdf_viewer.css + images + mermaid.min.js + katex');
 }
 
 if (watch) {

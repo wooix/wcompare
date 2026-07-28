@@ -6,6 +6,9 @@
   content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'" />
 <link rel="stylesheet" href="./app.css" />
 <link rel="stylesheet" href="./pdf_viewer.css" />
+<!-- KaTeX: 논문 요약에 섞여 오는 수식($N$, $$…$$)을 글자로 그린다. 폰트는 dist/renderer/fonts/에
+     함께 복사되어 같은 origin으로 잡힌다(esbuild.mjs copyStatic 참고) -->
+<link rel="stylesheet" href="./katex.min.css" />
 <style>
   /* ===== 테마 팔레트 =====
      색을 역할 이름으로만 부르는 이유: 라이트 테마에서 값이 뒤집히기 때문이다(다크에서 "떠 있는"
@@ -253,11 +256,23 @@
     padding:3px 10px; cursor:pointer; font:12px sans-serif; }
   .sum-tab:hover { background:var(--bg-tab-hover); }
   .sum-tab.on { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); } /* 툴바 토글과 같은 강조 관용구 */
-  .sum-regen { margin-left:auto; background:var(--bg-btn); color:var(--fg-dim); border:1px solid var(--border);
+  /* 오른쪽 끝으로 미는 건 .sum-font가 맡는다(탭바 DOM 순서: 탭 3개 → .sum-font → .sum-regen) */
+  .sum-regen { margin-left:6px; background:var(--bg-btn); color:var(--fg-dim); border:1px solid var(--border);
     border-radius:4px; padding:3px 8px; cursor:pointer; font:11px sans-serif; }
   .sum-regen:hover { background:var(--bg-btn-hover); }
   .sum-regen:disabled, .sum-tab:disabled { opacity:0.4; cursor:default; }
-  .sum-body { flex:1; min-height:0; overflow:auto; padding:10px 12px; }
+  /* --sum-font: 요약 본문의 기준 글씨 크기. 아래 마크다운 규칙이 전부 em이라 이 값 하나만
+     바꾸면 제목·본문·코드·수식이 함께 커지고 줄어든다(summaryPanel의 A− / A+ / ↺ 버튼). */
+  .sum-body { flex:1; min-height:0; overflow:auto; padding:10px 12px; font-size:var(--sum-font, 13px); }
+  /* 글씨 크기 버튼 — 탭바 오른쪽에 붙는 작은 묶음. 탭과 구분되게 테두리 없이 낮은 대비로 둔다. */
+  .sum-font { display:inline-flex; margin-left:auto; }
+  .sum-font button { background:var(--bg-btn); color:var(--fg-dim); border:1px solid var(--border);
+    padding:2px 7px; cursor:pointer; font:11px sans-serif; border-radius:0; }
+  .sum-font button:first-child { border-radius:4px 0 0 4px; }
+  .sum-font button:last-child { border-radius:0 4px 4px 0; }
+  .sum-font button + button { border-left:none; }
+  .sum-font button:hover { background:var(--bg-btn-hover); color:var(--fg); }
+  .sum-font button:disabled { opacity:0.4; cursor:default; }
   /* 필수: 흐름도는 pane이 실제 폭을 가질 때만 렌더된다(mermaid가 폭을 재야 한다) →
      활성 pane은 반드시 display:block 이어야 하고, 비활성은 display:none 이어야 한다. */
   .sum-pane { display:none; }
@@ -287,22 +302,36 @@
   .sum-busy-bar > i { display:block; height:100%; background:var(--info); width:0; transition:width .3s; }
   .sum-busy-hint { color:var(--fg-faint); font-size:11px; }
 
-  /* 마크다운 렌더 결과(markdownLite). LLM 출력이라 innerHTML 없이 DOM으로만 만들어진다. */
-  .md-h1, .md-h2, .md-h3, .md-h4, .md-h5, .md-h6 { color:var(--fg-strong); margin:14px 0 6px; line-height:1.35; }
-  .md-h1 { font-size:17px; } .md-h2 { font-size:15px; } .md-h3 { font-size:14px; }
-  .md-h4, .md-h5, .md-h6 { font-size:13px; color:var(--fg); }
-  .sum-pane > .md-h1:first-child, .sum-pane > .md-h2:first-child { margin-top:0; }
-  .md-p { margin:6px 0; line-height:1.65; color:var(--fg); }
-  .md-ul, .md-ol { margin:6px 0; padding-left:20px; }
-  .md-li { margin:3px 0; line-height:1.6; }
-  .md-quote { margin:8px 0; padding:2px 0 2px 10px; border-left:3px solid var(--accent-soft); color:var(--fg-dim); }
-  .md-pre { background:var(--bg-code); border:1px solid var(--border-soft); border-radius:4px; padding:8px;
-    overflow:auto; margin:8px 0; }
-  .md-code { font:11px monospace; color:var(--info); }
-  .md-icode { background:var(--bg-code); border-radius:3px; padding:1px 4px; font:11px monospace; color:var(--info); }
-  .md-strong { color:var(--fg-strong); }
-  .md-em { color:var(--fg); }
-  .md-hr { border:none; border-top:1px solid var(--border-soft); margin:12px 0; }
+  /* 마크다운 렌더 결과(markdownView). marked가 만든 표준 태그를 그대로 받으므로 클래스가 아니라
+     요소로 스타일한다 — 표·링크처럼 앞으로 늘어날 문법도 자동으로 이 규칙을 받는다.
+     HTML은 DOMPurify를 거친 뒤에만 DOM에 들어간다(LLM 출력은 신뢰할 수 없는 입력이다). */
+  /* 크기는 전부 em(=.sum-body의 --sum-font 기준)이다. px로 박으면 글씨 크기 조절 버튼이
+     본문만 키우고 제목·코드는 그대로 둬서 문서가 어그러진다. */
+  .sum-pane :is(h1, h2, h3, h4, h5, h6) { color:var(--fg-strong); margin:1.1em 0 0.45em; line-height:1.35; }
+  .sum-pane h1 { font-size:1.3em; } .sum-pane h2 { font-size:1.15em; } .sum-pane h3 { font-size:1.08em; }
+  .sum-pane :is(h4, h5, h6) { font-size:1em; color:var(--fg); }
+  .sum-pane > :first-child { margin-top:0; }
+  .sum-pane p { margin:6px 0; line-height:1.65; color:var(--fg); }
+  .sum-pane :is(ul, ol) { margin:6px 0; padding-left:20px; }
+  .sum-pane li { margin:3px 0; line-height:1.6; }
+  .sum-pane li > :is(ul, ol) { margin:2px 0; } /* 중첩 목록은 위아래 여백을 줄여 촘촘하게 */
+  .sum-pane blockquote { margin:8px 0; padding:2px 0 2px 10px; border-left:3px solid var(--accent-soft);
+    color:var(--fg-dim); }
+  .sum-pane pre { background:var(--bg-code); border:1px solid var(--border-soft); border-radius:4px;
+    padding:8px; overflow:auto; margin:8px 0; }
+  .sum-pane pre code { font:0.85em monospace; color:var(--info); background:none; padding:0; }
+  .sum-pane code { background:var(--bg-code); border-radius:3px; padding:1px 4px; font:0.85em monospace;
+    color:var(--info); }
+  .sum-pane strong { color:var(--fg-strong); }
+  .sum-pane hr { border:none; border-top:1px solid var(--border-soft); margin:12px 0; }
+  .sum-pane a { color:var(--accent); }
+  /* 표는 패널이 좁아 넘칠 수 있다 → 페이지 전체가 아니라 표만 가로로 스크롤되게 한다 */
+  .sum-pane table { border-collapse:collapse; margin:8px 0; display:block; overflow-x:auto; max-width:100%; }
+  .sum-pane :is(th, td) { border:1px solid var(--border-soft); padding:3px 8px; text-align:left; }
+  .sum-pane th { color:var(--fg-strong); background:var(--bg-code); }
+  /* 수식(KaTeX). 긴 디스플레이 수식도 패널 밖으로 삐져나오지 않게 자기 안에서 스크롤한다. */
+  .sum-pane .katex { color:var(--fg); }
+  .sum-pane .katex-display { overflow-x:auto; overflow-y:hidden; padding:2px 0; }
   .pdfViewer .page { margin:8px auto; border:1px solid var(--page-border); }
   #statusbars { height: 22px; display: flex; background: var(--bg); color: var(--info); font: 12px monospace; }
   #statusbars > div { flex: 1; padding: 0 8px; overflow: hidden; white-space: nowrap; opacity: 0.5; }

@@ -14,6 +14,10 @@ registerScheme();
 function createWindow(pair = { left: null, right: null }) {
   const win = new BrowserWindow({
     width: 1280, height: 800,
+    // e2e가 돌 때마다 창이 사용자 화면 위로 튀어나와 작업을 방해한다.
+    // 숨긴 창도 레이아웃·렌더 경로는 그대로라 크기 측정과 스크린샷이 보이는 창과 동일하게 나온다
+    // (실측 확인). WCOMPARE_TRANSPAPER·WCOMPARE_DICT_FAKE와 같은 계열의 테스트 심이다.
+    show: !process.env.WCOMPARE_HIDE_WINDOW,
     webPreferences: {
       sandbox: true, contextIsolation: true, nodeIntegration: false,
       preload: path.join(__dirname, '..', '..', 'dist', 'preload', 'preload.js'),

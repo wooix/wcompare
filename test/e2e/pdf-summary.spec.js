@@ -125,12 +125,12 @@ test('요약 생성: 세 탭이 채워지고 흐름도는 mermaid SVG로 그려�
   // Overview가 먼저 완성되고 그 탭이 자동으로 선택된다
   await expect(win.locator(`${S} .sum-pane[data-kind=overview]`))
     .toContainText('한 줄짜리 개요 본문', { timeout: 25000 });
-  // 마크다운이 DOM으로 렌더된다(굵은 소제목이 <strong>이 된다)
-  await expect(win.locator(`${S} .sum-pane[data-kind=overview] .md-strong`)).toHaveCount(1);
+  // 마크다운이 표준 태그로 렌더된다(굵은 소제목이 <strong>이 된다)
+  await expect(win.locator(`${S} .sum-pane[data-kind=overview] strong`)).toHaveCount(1);
 
   // 절별 요약: 목차 헤딩이 h2로 렌더된다
   await win.click(`${S} .sum-tab[data-kind=sections]`);
-  await expect(win.locator(`${S} .sum-pane[data-kind=sections] .md-h2`))
+  await expect(win.locator(`${S} .sum-pane[data-kind=sections] h2`))
     .toHaveCount(2, { timeout: 25000 });
   await expect(win.locator(`${S} .sum-pane[data-kind=sections]`)).toContainText('제안 방법');
 
@@ -287,5 +287,116 @@ test('회귀: Switch로 문서가 좌우를 옮겨 다녀도 요약은 대상 �
   await expect(win.locator(`${S} .sum-pane[data-kind=overview]`)).toBeEmpty();
 
   await app.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// 수식·표가 섞인 응답을 주는 가짜 agy. 논문 요약에는 $N$ 같은 수식이 흔히 섞여 오는데,
+// 예전 자체 렌더러는 이걸 달러 기호째로 노출했다(사용자 신고).
+function stubAgyRich(dir) {
+  const p = path.join(dir, 'agy');
+  const say = (body) => ["cat <<'WCEOF'", body, 'WCEOF'].join('\n');
+  fs.writeFileSync(p, [
+    '#!/bin/sh',
+    'prompt="$2"',
+    'case "$prompt" in',
+    '  *"흐름도를 mermaid"*)',
+    say('```mermaid\nflowchart TD\n  A["문제"] --> B["해법"]\n```'),
+    '    ;;',
+    '  *"절 단위로 나누어"*)',
+    say('## 1. 서론\n표본 수는 $N$ 이고 손실은 $$L = \\frac{1}{N} \\sum_i x_i$$ 로 둔다.\n\n| 항목 | 값 |\n|---|---|\n| 정확도 | 91.2 |'),
+    '    ;;',
+    '  *)',
+    say('**핵심**\n토큰 수 $N$ 을 늘리면 성능이 오른다.\n\n- 첫째\n  - 중첩 항목\n- 둘째'),
+    '    ;;',
+    'esac',
+  ].join('\n'), { mode: 0o755 });
+  return p;
+}
+
+test('마크다운 뷰어: LaTeX 수식이 글자로 렌더되고 표·중첩목록도 그려진다', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-sum-math-'));
+  const a = path.join(dir, 'paper.pdf');
+  fs.writeFileSync(a, makePdf(4, { height: 900, lines: 6 }));
+  const storageDir = path.join(dir, 'storage');
+  const { app, win } = await launch(
+    { ...process.env, WCOMPARE_AGY: stubAgyRich(dir) }, [a], storageDir);
+
+  await win.click('#btn-layout-summary');
+  await win.click(`${S} .sum-empty-go`);
+
+  const ov = `${S} .sum-pane[data-kind=overview]`;
+  await expect(win.locator(ov)).toContainText('토큰 수', { timeout: 25000 });
+  // 핵심: 달러 기호가 그대로 남지 않고 KaTeX 요소가 된다
+  await expect(win.locator(`${ov} .katex`)).not.toHaveCount(0);
+  await expect(win.locator(ov)).not.toContainText('$N$');
+  // 중첩 목록 — 자체 렌더러가 못 하던 것
+  await expect(win.locator(`${ov} li > ul`)).not.toHaveCount(0);
+
+  await win.click(`${S} .sum-tab[data-kind=sections]`);
+  const sec = `${S} .sum-pane[data-kind=sections]`;
+  await expect(win.locator(`${sec} table th`)).not.toHaveCount(0, { timeout: 25000 });
+  await expect(win.locator(`${sec} .katex-display`)).not.toHaveCount(0); // $$…$$ 는 블록 수식
+  // 수식이 빈 칸이 아니라 실제로 그려졌다(폰트가 없으면 폭이 0에 가깝다)
+  const w = await win.locator(`${sec} .katex-display .katex`).first()
+    .evaluate((el) => el.getBoundingClientRect().width);
+  expect(w).toBeGreaterThan(20);
+  // "렌더됐다"가 아니라 "제대로 렌더됐다"를 본다. \frac이 망가지면 KaTeX는 그것을 조용히
+  // 'frac'이라는 글자로 그리는데, 위의 존재·폭 단언만으로는 그 상태도 통과한다(실제로 겪음).
+  await expect(win.locator(`${sec} .katex-display .mfrac`)).not.toHaveCount(0);
+  // 눈에 보이는 부분(.katex-html)만 본다 — .katex-mathml의 <annotation>에는 원본 TeX가
+  // 그대로 들어 있어(접근성용, CSS로 숨겨짐) 패널 전체 텍스트로 재면 늘 'frac'이 잡힌다.
+  const shown = await win.locator(`${sec} .katex-display .katex-html`).first().innerText();
+  expect(shown).not.toMatch(/frac|sum_/);
+
+  await app.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('요약 뷰어 글씨 크기: A+ / A− / ↺ 가 본문과 제목을 함께 조절하고 유지된다', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-sum-font-'));
+  const a = path.join(dir, 'paper.pdf');
+  fs.writeFileSync(a, makePdf(4, { height: 900, lines: 6 }));
+  const storageDir = path.join(dir, 'storage');
+  const env = { ...process.env, WCOMPARE_AGY: stubAgyRich(dir) };
+  const { app, win } = await launch(env, [a], storageDir);
+
+  await win.click('#btn-layout-summary');
+  await win.click(`${S} .sum-empty-go`);
+  await expect(win.locator(`${S} .sum-pane[data-kind=overview]`)).toContainText('토큰 수', { timeout: 25000 });
+
+  const bodyPx = () => win.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.sum-body')).fontSize));
+  const strongPx = () => win.evaluate(() => {
+    const el = document.querySelector('.sum-pane[data-kind=overview] strong');
+    return el ? parseFloat(getComputedStyle(el).fontSize) : 0;
+  });
+
+  const base = await bodyPx();
+  expect(base).toBeGreaterThan(0);
+
+  await win.click(`${S} .sum-font-inc`);
+  await win.click(`${S} .sum-font-inc`);
+  const bigger = await bodyPx();
+  expect(bigger).toBeGreaterThan(base);
+  // 제목·강조도 함께 커져야 한다 — px로 박아 두면 본문만 커지고 문서가 어그러진다
+  expect(await strongPx()).toBeGreaterThan(0);
+
+  await win.click(`${S} .sum-font-dec`);
+  expect(await bodyPx()).toBeLessThan(bigger);
+
+  await win.click(`${S} .sum-font-reset`);
+  expect(await bodyPx()).toBe(base);
+
+  // 크기를 키운 뒤 앱을 껐다 켜면 그대로 유지된다
+  await win.click(`${S} .sum-font-inc`);
+  const kept = await bodyPx();
+  await app.close();
+
+  const again = await launch(env, [a], storageDir);
+  await again.win.click('#btn-layout-summary');
+  await expect
+    .poll(() => again.win.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.sum-body')).fontSize)))
+    .toBe(kept);
+  await again.app.close();
+
   fs.rmSync(dir, { recursive: true, force: true });
 });

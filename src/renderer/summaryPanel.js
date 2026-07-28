@@ -3,7 +3,7 @@
 // 상태는 전부 클로저에 두고 밖으로는 함수만 노출한다(pdfDualView의 createBusy/createUrlPanel 관용구).
 // 요약을 "만드는" 일은 콜백(onGenerate/onRegenerate)에 통째로 위임하고, 이 모듈은 표시와
 // 오류 안내만 맡는다 — 덕분에 LLM 호출 경로가 바뀌어도 여기는 손댈 필요가 없다.
-import { renderMarkdown } from './markdownLite.js';
+import { renderMarkdown } from './markdownView.js';
 import { renderMermaid } from './mermaidLoader.js';
 
 const TABS = [
@@ -17,6 +17,27 @@ const MAX_TEXT = 200000; // 마크다운(overview/sections)
 const MAX_FLOW = 20000; // mermaid 코드. 넘쳐서 잘리면 파싱이 깨지고, 그건 아래 오류 경로가 받아 준다.
 
 let flowSeq = 0; // mermaid는 id로 <defs>를 구분한다 → 렌더마다 새 id를 준다
+
+// ===== 글씨 크기 =====
+// 본문 크기는 .sum-body의 font-size:var(--sum-font, 13px)가 정한다. 마크다운 규칙이 전부 em이라
+// 패널 루트에 이 변수 하나만 세우면 제목·본문·코드·수식이 한꺼번에 따라 움직인다.
+const FONT_DEFAULT = 13;
+const FONT_MIN = 10;
+const FONT_MAX = 24;
+const FONT_STEP = 1;
+// 문서가 아니라 사용자의 보기 취향이므로 프로젝트 파일이 아닌 localStorage에 둔다
+// (app.js의 wc-night / wc-dict / wc-layout과 같은 계열).
+const FONT_KEY = 'wc-sum-font';
+
+// 스토리지 값은 신뢰하지 않는다 — 사람이 손댈 수 있고 옛 버전이 남긴 값일 수도 있다.
+// 숫자가 아니거나 범위를 벗어나면 조용히 기본값으로 되돌린다.
+function readFontSize() {
+  try {
+    const n = Number(localStorage.getItem(FONT_KEY));
+    if (Number.isFinite(n) && n >= FONT_MIN && n <= FONT_MAX) return Math.round(n);
+  } catch { /* 스토리지 불가 환경 */ }
+  return FONT_DEFAULT;
+}
 
 // pdfDualView.createBusy와 같은 모양의 오버레이. 패널 위에 겹쳐 진행 상황을 알린다.
 function createBusy(rootEl) {
@@ -62,6 +83,25 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
     tabbar.appendChild(b);
     tabBtns[t.kind] = b;
   }
+  // 글씨 크기 조절 — 탭바 오른쪽에 붙는다(.sum-font의 margin-left:auto가 여기를 기준으로 민다).
+  // DOM 순서는 CSS가 전제하는 "탭 3개 → .sum-font → .sum-regen"을 지켜야 한다.
+  const fontBox = document.createElement('div');
+  fontBox.className = 'sum-font';
+  const fontDec = document.createElement('button');
+  fontDec.className = 'sum-font-dec';
+  fontDec.textContent = 'A−';
+  fontDec.title = '글씨 작게';
+  const fontReset = document.createElement('button');
+  fontReset.className = 'sum-font-reset';
+  fontReset.textContent = '↺';
+  fontReset.title = '글씨 크기 초기화';
+  const fontInc = document.createElement('button');
+  fontInc.className = 'sum-font-inc';
+  fontInc.textContent = 'A+';
+  fontInc.title = '글씨 크게';
+  fontBox.append(fontDec, fontReset, fontInc);
+  tabbar.appendChild(fontBox);
+
   const regen = document.createElement('button');
   regen.className = 'sum-regen';
   regen.textContent = '다시 생성';
@@ -104,6 +144,29 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
   el.append(tabbar, body, err, empty);
   const setBusy = createBusy(el); // 빈 상태까지 덮도록 마지막에 붙인다
   hostEl.appendChild(el);
+
+  // 글씨 크기는 reset()이 건드리지 않는다 — 문서를 바꿔도 사용자가 고른 크기는 그대로여야 한다.
+  // (흐름도는 SVG라 자체 크기를 가지므로 이 값의 영향을 받지 않고, 다시 그릴 필요도 없다.)
+  let fontSize = readFontSize();
+  function applyFont(save) {
+    el.style.setProperty('--sum-font', `${fontSize}px`);
+    // 경계에 닿으면 눌러도 아무 일이 일어나지 않는다 → "안 되는 상태"를 버튼 모양으로 보여 준다.
+    fontDec.disabled = fontSize <= FONT_MIN;
+    fontInc.disabled = fontSize >= FONT_MAX;
+    if (save) {
+      try { localStorage.setItem(FONT_KEY, String(fontSize)); } catch { /* 저장 실패 무시 */ }
+    }
+  }
+  function setFontSize(n) {
+    const next = Math.min(FONT_MAX, Math.max(FONT_MIN, n));
+    if (next === fontSize) return; // 값이 그대로면 저장도 하지 않는다
+    fontSize = next;
+    applyFont(true);
+  }
+  fontDec.addEventListener('click', () => setFontSize(fontSize - FONT_STEP));
+  fontInc.addEventListener('click', () => setFontSize(fontSize + FONT_STEP));
+  fontReset.addEventListener('click', () => setFontSize(FONT_DEFAULT));
+  applyFont(false); // 읽어 온 값을 그대로 되쓰는 건 의미가 없으니 최초 반영은 저장하지 않는다
 
   let tab = 'overview';
   let flowCode = ''; // 흐름도 원본. 탭이 드러날 때까지 보관만 한다.
