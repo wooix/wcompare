@@ -24,9 +24,23 @@ const linters = {
   left: wireLintController(monaco, editorApi, 'left'),
   right: wireLintController(monaco, editorApi, 'right'),
 };
-let theme = 'vs-dark';
+// 화면 테마 — 앱 전체(툴바·패널·요약)는 index.html의 CSS 변수가, 편집기는 Monaco 테마가 맡는다.
+// 값은 설정(ui.theme)에 저장돼 창을 새로 열어도 유지된다. PDF 야간 모드(Night)는 페이지 canvas만
+// 반전하는 별개 기능이라 여기에 묶지 않는다 — 묶으면 "밝은 UI + 반전된 PDF" 조합을 못 만든다.
+let theme = 'dark';
 let ws = false;
-monaco.editor.setTheme(theme);
+function applyTheme(name) {
+  theme = name === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = theme;
+  monaco.editor.setTheme(theme === 'light' ? 'vs' : 'vs-dark');
+  const sel = $('set-theme');
+  if (sel) sel.value = theme; // 설정창이 열려 있으면 선택 상태도 맞춘다
+}
+function setTheme(name) {
+  applyTheme(name);
+  window.wcompare.settings.set({ ui: { theme } }).catch((e) => console.warn('테마 저장 실패(무시):', e?.message || e));
+}
+applyTheme(theme);
 
 editorApi.onDirty(() => refreshStatus());
 const mark = (s) => (s.path ? (s.dirty ? '● ' : '') + s.path.split('/').pop() : '(empty)');
@@ -134,10 +148,10 @@ function ensureDualView() {
   dualView.onMarkersChanged((docPath) => scheduleMarkerSave(docPath));
   // 빈 pane의 URL 입력 → main이 내려받아 보관 폴더에 둔 파일을 그 자리에 연다.
   // 오류는 alert 대신 던져서 URL 패널이 입력창 아래에 인라인으로 보여 준다.
-  dualView.onOpenUrl(async (side, url) => {
+  dualView.onOpenUrl(async (side, url, opts) => {
     if (translating) throw new Error('번역이 끝난 뒤에 열 수 있습니다');
     try {
-      const { path: p } = await window.wcompare.openPdfUrl(url);
+      const { path: p } = await window.wcompare.openPdfUrl(url, opts);
       await openPdfOrThrow(side, p);
     } catch (e) {
       throw new Error(ipcMessage(e)); // main이 쓴 한국어 문장만 남겨 그대로 보여 준다
@@ -207,9 +221,7 @@ async function openPdfOrThrow(side, p) {
   // 프로젝트 로드는 openByPath→여기로 들어와 자동 복원하지만, onProjectLoad가 마지막에
   // setMarkers로 프로젝트 파일의 markers를 덮어써 "프로젝트가 우선"한다(설계 확정).
   await restoreMarkers(side, real);
-  // 요약은 "원문" 문서에 묶인다 — 번역본이 반대편에 열려도 원문의 요약을 지우지 않도록
-  // 지금 연 쪽이 요약 대상일 때만 갈아 끼운다.
-  if (side === summarySide()) await restoreSummary(real);
+  await syncSummaryToDoc(); // 요약 대상 문서가 바뀌었을 때만 패널을 갈아 끼운다
   updatePdfBtns();
 }
 async function openPdf(side, p) {
@@ -257,6 +269,9 @@ async function switchSides() {
   if (translating) return;
   await dualView?.switchSides();
   [pdfPaths.left, pdfPaths.right] = [pdfPaths.right, pdfPaths.left];
+  // 요약 대상은 "왼쪽 우선"이라 교체와 함께 바뀐다 → 패널도 새 대상 문서로 다시 묶는다.
+  // 빠뜨리면 닫힌 뒤에도 앞 문서 요약이 남아 새 문서용 생성 버튼이 사라진다.
+  await syncSummaryToDoc();
   updatePdfBtns();
 }
 
@@ -264,6 +279,35 @@ async function switchSides() {
 // 요약 재료는 "원문" 쪽에서 뽑는다 — 왼쪽이 있으면 왼쪽, 없으면 오른쪽.
 // 번역본을 다시 요약하면 번역에서 한 번 잃은 것 위에 요약 손실이 또 겹치기 때문이다.
 const summarySide = () => (pdfPaths.left ? 'left' : (pdfPaths.right ? 'right' : null));
+
+// 요약 생성의 세대. 문서가 바뀔 때마다(열기·닫기) 올린다.
+// 진행 중이던 생성은 "끝나지 않을 수도" 있다 — 문서를 닫으면 pdf.js가 loadingTask를 destroy하고,
+// 그때 대기 중이던 getPageTexts/getOutline promise는 영영 settle되지 않는다. 그래서 취소를
+// 기다리는 대신 세대를 올려 무효로 표시하고, 늦게 끝나더라도 새 문서 화면을 건드리지 않게 한다.
+let summaryRun = 0;
+// 요약 패널이 지금 어느 "문서"의 것인지. side가 아니라 경로로 들고 있는 이유: Switch로 문서가
+// 좌우를 옮겨 다니는데, 닫힌 문서가 어느 쪽에 있었는지로 판정하면 어긋난다
+// (실제 버그: A를 요약 → Switch → 오른쪽으로 옮겨간 A를 닫으면, 'right !== left'라서
+//  "요약 side가 아니다"로 오판해 A의 요약이 남고 새 문서용 생성 버튼이 사라졌다).
+let summaryDoc = null;
+function resetSummaryPanel() {
+  summaryRun++;
+  summaryDoc = null;
+  summaryPanel?.reset();
+  // main에 걸려 있는 LLM 호출도 끊는다 — 화면에서 버린 결과를 위해 계속 돈이 나갈 이유가 없다.
+  window.wcompare.cancelSummarize().catch(() => {});
+}
+
+// 요약 패널을 지금의 "원문 쪽"(왼쪽 우선) 문서에 다시 묶는다. 열기·닫기·Switch가 모두 이 한 곳을
+//지나게 해서 세 경로가 서로 다른 판정을 하지 않게 한다.
+// 이미 그 문서의 것이면 아무것도 하지 않는다 — 같은 문서를 다시 그리면 진행 중인 생성이 헛되이 끊긴다.
+async function syncSummaryToDoc() {
+  if (!summaryPanel) return;
+  const side = summarySide();
+  const doc = side ? pdfPaths[side] : null;
+  if (doc === summaryDoc) return;
+  if (doc) await restoreSummary(doc); else resetSummaryPanel();
+}
 
 // 프롬프트 재료를 모은다. 목차가 있으면 각 절의 페이지 범위로 본문을 잘라 "절 제목 + 그 절 본문"
 // 형태로 넘긴다 — 모델이 목차 순서를 그대로 따르게 하려는 것이 목적이다(요구사항의 "목차 순서에 따른 요약").
@@ -295,15 +339,20 @@ async function generateSummary() {
   if (!side) throw new Error('먼저 PDF를 여세요');
   if (translating) throw new Error('번역이 끝난 뒤에 생성할 수 있습니다');
   const docPath = pdfPaths[side];
+  // 이 실행의 세대. 도중에 문서가 바뀌면(닫기·다른 문서 열기) 세대가 어긋나므로,
+  // 늦게 끝나더라도 새 문서의 패널에 앞 문서의 요약을 쓰지 않는다.
+  const myRun = ++summaryRun;
+  const alive = () => myRun === summaryRun;
 
   summaryPanel.setBusy({ title: '논문 요약 준비 중…', sub: '본문과 목차를 읽는 중' });
   let material;
   try {
     material = await collectSummaryMaterial(side);
   } catch (e) {
-    summaryPanel.setBusy(null);
+    if (alive()) summaryPanel.setBusy(null);
     throw new Error('본문을 읽지 못했습니다: ' + (e?.message || e));
   }
+  if (!alive()) return; // 본문을 읽는 사이에 문서가 바뀌었다 — 조용히 물러난다
 
   const parts = { overview: '', sections: '', flow: '' };
   const failed = [];
@@ -311,6 +360,7 @@ async function generateSummary() {
   let done = 0;
   try {
     for (const kind of SUMMARY_KINDS) {
+      if (!alive()) return; // 문서가 바뀌었다 — 남은 탭을 만들 이유가 없다
       summaryPanel.setBusy({
         title: '논문 요약 생성 중…',
         sub: `${SUMMARY_LABEL[kind]} (${done + 1}/${SUMMARY_KINDS.length})`,
@@ -321,6 +371,7 @@ async function generateSummary() {
         const res = await window.wcompare.summarize({ path: docPath, kind, ...material });
         parts[kind] = res.content;
         truncated = truncated || !!res.truncated;
+        if (!alive()) return; // 기다리는 사이에 문서가 바뀌었다면 새 화면에 앞 문서 요약을 쓰지 않는다
         summaryPanel.setPart(kind, res.content);
         if (kind === 'overview') summaryPanel.setTab('overview'); // 먼저 완성된 것을 바로 보여 준다
       } catch (e) {
@@ -329,14 +380,14 @@ async function generateSummary() {
       done++;
     }
   } finally {
-    summaryPanel.setBusy(null);
-  }
-
-  // 부분 성공도 캐시한다: 다시 열면 성공한 탭은 즉시 뜨고 실패한 것만 다시 만들면 된다.
-  // summaryStore는 넘긴 parts를 병합 없이 덮어쓰므로 항상 세 파트를 함께 넘긴다.
-  if (SUMMARY_KINDS.some((k) => parts[k])) {
-    window.wcompare.summary.save(docPath, parts, { truncated })
-      .catch((e) => console.warn('요약 저장 실패(무시):', e?.message || e));
+    // 낡은 실행이 새 문서의 진행 표시를 지우지 않게 한다.
+    if (alive()) summaryPanel.setBusy(null);
+    // 문서가 바뀌었더라도 여기까지 만든 것은 그 문서의 캐시로 남긴다 — 다시 열면 바로 뜬다.
+    // summaryStore는 넘긴 parts를 병합 없이 덮어쓰므로 항상 세 파트를 함께 넘긴다.
+    if (SUMMARY_KINDS.some((k) => parts[k])) {
+      window.wcompare.summary.save(docPath, parts, { truncated })
+        .catch((e) => console.warn('요약 저장 실패(무시):', e?.message || e));
+    }
   }
   if (failed.length) throw new Error(failed.join('\n'));
 }
@@ -344,7 +395,8 @@ async function generateSummary() {
 // 캐시 복원 — LLM 호출이 느리고 비싸서, 같은 논문을 다시 열면 기다림 없이 떠야 한다.
 async function restoreSummary(docPath) {
   if (!summaryPanel) return;
-  summaryPanel.reset(); // 앞 문서의 내용이 남지 않게 먼저 비운다
+  resetSummaryPanel(); // 앞 문서의 내용도, 진행 중이던 생성의 잠금도 함께 푼다
+  summaryDoc = docPath; // reset이 null로 되돌린 뒤에 이 문서로 다시 묶는다
   try {
     const { parts } = await window.wcompare.summary.load(docPath);
     for (const kind of SUMMARY_KINDS) if (parts?.[kind]) summaryPanel.setPart(kind, parts[kind]);
@@ -401,7 +453,9 @@ function updatePdfBtns() {
   if (t) {
     t.disabled = !translating && !only;
     t.textContent = translating ? '번역 취소' : '한국어 번역 ▶';
-    t.title = translating || only ? 'transpaper로 번역해 반대편에 엽니다' : 'PDF를 한쪽에만 열었을 때 사용할 수 있습니다';
+    t.title = translating ? '진행 중인 번역을 취소합니다'
+      : only ? 'transpaper로 번역해 반대편에 엽니다. 이미 번역본이 있으면 그것을 엽니다 (⌥+클릭 = 다시 번역)'
+        : 'PDF를 한쪽에만 열었을 때 사용할 수 있습니다';
   }
   const s = $('btn-switch');
   if (s) {
@@ -410,7 +464,8 @@ function updatePdfBtns() {
   }
 }
 
-async function translatePdf() {
+// force=true면 이미 번역본이 있어도 새로 만든다(⌥+클릭). 기본은 기존 번역본 재사용.
+async function translatePdf(force = false) {
   if (translating) { await window.wcompare.cancelTranslate(); return; }
   const [side] = loadedPdfSides();
   if (!side) return;
@@ -428,12 +483,13 @@ async function translatePdf() {
   clearInterval(translateTimer);
   translateTimer = setInterval(() => { if (translating) showTranslateProgress(); }, 1000); // 경과 시간을 매초 갱신
   try {
-    let res = await window.wcompare.translatePdf({ path: src });
-    if (res.existed) {
-      const again = confirm('이미 번역본이 있습니다.\n\n[확인] 다시 번역하기\n[취소] 기존 번역본 열기');
-      if (again) { translateDone = 0; showTranslateProgress(); res = await window.wcompare.translatePdf({ path: src, force: true }); }
-    }
+    const res = await window.wcompare.translatePdf({ path: src, force });
     await openPdf(translateTarget, res.output);
+    // 이미 만들어 둔 번역본은 묻지 않고 그대로 연다. 번역은 페이지마다 LLM을 부르는 작업이라
+    // 논문 하나에 수 분이 걸리므로, 되묻는 순간 실수로 같은 일을 다시 시키기 쉽다.
+    // 다시 만들고 싶으면 ⌥(Alt)를 누른 채 번역 버튼을 누른다(버튼 툴팁에 안내).
+    // 안내는 openPdf 뒤에 쓴다 — openPdf가 setMode('pdf')를 지나며 상태줄을 비우기 때문.
+    if (res.existed) setStatus(`기존 번역본을 재사용했습니다: ${res.output.split('/').pop()}`);
     if (res.partial) alert('일부 페이지는 번역에 실패해 원문 그대로 유지되었습니다.');
   } catch (e) {
     alert('번역 실패: ' + (e?.message || e));
@@ -564,14 +620,9 @@ async function openByDialog(side) {
 async function closeFile(side) {
   if (mode === 'pdf') {
     if (translating) return; // 번역 중 문서 상태 변경 금지 (switch와 동일)
-    const wasSummarySide = side === summarySide(); // 닫기 전에 판정해야 한다
     await dualView?.closeSide(side);
     pdfPaths[side] = null;
-    // 요약은 원문 문서에 묶여 있다 → 그 문서가 닫히면 남은 문서의 요약으로 갈아 끼우고, 없으면 비운다.
-    if (wasSummarySide) {
-      const next = summarySide();
-      if (next) await restoreSummary(pdfPaths[next]); else summaryPanel?.reset();
-    }
+    await syncSummaryToDoc(); // 닫힌 문서가 요약의 주인이었으면 남은 문서로 갈아 끼우고, 없으면 비운다
     updatePdfBtns();
   } else {
     if (!(await dirtyGuard(side))) return;
@@ -586,7 +637,6 @@ async function closeFile(side) {
 $('btn-open-left').onclick = () => openByDialog('left');
 $('btn-open-right').onclick = () => openByDialog('right');
 $('btn-mode').onclick = () => { ensureDualView(); setMode(mode === 'diff' ? 'pdf' : 'diff'); };
-$('btn-theme').onclick = () => { theme = theme === 'vs-dark' ? 'vs' : 'vs-dark'; monaco.editor.setTheme(theme); };
 $('btn-save').onclick = () => save();
 $('btn-prev-diff').onclick = () => editorApi.goToDiff('previous');
 $('btn-next-diff').onclick = () => editorApi.goToDiff('next');
@@ -597,7 +647,7 @@ $('btn-zoom-in').onclick = () => dualView?.zoom(1);
 $('btn-sync').onclick = () => dualView?.setSync(!dualView.isSync());
 $('btn-fit').onclick = () => dualView?.setFit(!dualView.isFit());
 $('btn-switch').onclick = () => switchSides();
-$('btn-translate').onclick = () => translatePdf();
+$('btn-translate').onclick = (e) => translatePdf(e.altKey); // ⌥+클릭 = 기존 번역본 무시하고 다시 번역
 $('btn-back').onclick = () => dualView?.goBack();
 $('btn-forward').onclick = () => dualView?.goForward();
 $('btn-toc').onclick = () => {
@@ -612,10 +662,12 @@ for (const l of LAYOUTS) $(`btn-layout-${l}`).onclick = () => setLayout(l);
 // 설정창에서 바꾸면 즉시 갱신한다(현재 창 한정 — 다른 창은 다음 openSettings/재시작 시 반영).
 let shortcuts = { dict: 'Cmd+D', fit: 'Alt+F', sync: 'Alt+S', night: 'Alt+N', switch: 'Alt+ArrowRight' };
 let settingsCapture = null; // 설정창에서 키 입력 대기 중인 액션 id(없으면 null)
-async function loadShortcuts() {
+// 시작 시 한 번 — 저장된 단축키와 테마를 현재 창에 반영한다(비동기라 실패하면 기본값 유지).
+async function loadUserSettings() {
   try {
     const s = await window.wcompare.settings.get();
     if (s && s.shortcuts) shortcuts = { ...shortcuts, ...s.shortcuts };
+    if (s?.ui?.theme) applyTheme(s.ui.theme);
   } catch { /* 로드 실패 시 기본값 유지 */ }
 }
 // 액션 실행. PDF 전용(fit/sync/switch)은 dualView 존재·pdf 모드 가드를 지킨다(없으면 무시).
@@ -654,6 +706,8 @@ $('set-storage-change').onclick = async () => {
   if (s) $('set-storage-path').value = s.storageDir;
 };
 $('settings-close').onclick = () => { endShortcutCapture(); $('settings-dialog').close(); };
+// 테마 선택은 고르는 즉시 반영·저장한다(체크박스들과 같은 즉시 적용 관용구).
+$('set-theme')?.addEventListener('change', (e) => setTheme(e.target.value));
 
 // ===== 설정창: 토글 단축키 UI =====
 // ACTIONS 순서대로 행을 만든다: 라벨 + readonly 표시 input + "변경" 버튼 + 경고 span.
@@ -785,7 +839,7 @@ $('set-agy-refresh').onclick = async () => {
 };
 
 // ===== PDF 야간 모드 =====
-// 페이지 canvas만 CSS 필터로 반전한다(index.html). Monaco 테마(btn-theme)와는 독립 —
+// 페이지 canvas만 CSS 필터로 반전한다(index.html). 화면 테마(설정창 ui.theme)와는 독립 —
 // 묶으면 diff/pdf 상태가 서로 꼬인다.
 let night = false;
 try { night = localStorage.getItem('wc-night') === '1'; } catch { /* 스토리지 불가 환경 */ }
@@ -967,6 +1021,7 @@ async function openSettings() {
   $('set-archive-pdf').checked = !!s.archivePdfOnOpen;
   $('set-keep-translations').checked = !!s.keepTranslationsInStorage;
   if (s.shortcuts) shortcuts = { ...shortcuts, ...s.shortcuts }; // 저장된 값으로 현재 창 갱신
+  if (s.ui?.theme) applyTheme(s.ui.theme); // select 선택 상태까지 함께 맞춘다
   renderAllShortcutRows();
   applyTranslateSettings(s.translate);
   $('set-agy-refresh-status').textContent = '';
@@ -1007,7 +1062,7 @@ const MENU = {
   'menu:prev-diff': () => editorApi.goToDiff('previous'),
   'menu:toggle-ws': () => { ws = !ws; editorApi.updateOptions({ ignoreTrimWhitespace: ws }); },
   'menu:toggle-vim': () => toggleVim(editorApi),
-  'menu:toggle-theme': () => { theme = theme === 'vs-dark' ? 'vs' : 'vs-dark'; monaco.editor.setTheme(theme); },
+  'menu:toggle-theme': () => setTheme(theme === 'dark' ? 'light' : 'dark'),
   'menu:toggle-night': () => toggleNight(),
   'menu:toggle-dict': () => toggleDict(),
   'menu:settings': () => openSettings(),
@@ -1028,9 +1083,13 @@ window.wcompare.onOpenPair(async ({ left, right }) => {
 });
 
 updateDictBtn();
-setMode('diff');
+// 기본은 PDF 모드다. 이 앱의 주 용도가 논문 대조·요약이라, 빈 왼쪽 pane의 URL 입력창이
+// 시작 화면인 편이 자연스럽다. dualView를 미리 만들어야 그 입력창이 실제로 존재한다.
+// 텍스트 파일을 열면 openByPath/openByDialog가 알아서 diff로 되돌린다.
+ensureDualView();
+setMode('pdf');
 refreshStatus();
-loadShortcuts(); // 저장된 커스텀 단축키를 로드(비동기 — 실패 시 기본값 유지)
+loadUserSettings(); // 저장된 단축키·테마를 로드(비동기 — 실패 시 기본값 유지)
 
 // e2e 테스트 훅 — 렌더러 내부 상태를 읽기 전용으로 노출한다(외부 네트워크·경로 생성과 무관).
 window.__wc = { editorApi, getMode: () => mode, isMdTocOpen: () => mdTocOpen, isDictOn: () => dictOn, dictCalls: () => dictExternalCalls, getShortcuts: () => ({ ...shortcuts }), isNight: () => night, getLayout: () => layout, summaryTab: () => summaryPanel?.getTab() ?? null };

@@ -8,8 +8,9 @@ contextBridge.exposeInMainWorld('wcompare', {
   lint: (payload) => ipcRenderer.invoke('lint:run', payload),
   pdfContextMenu: (flags) => ipcRenderer.invoke('ui:pdf-context-menu', flags),
   copyText: (text) => ipcRenderer.invoke('clipboard:writeText', text),
-  // URL로 PDF 열기: 렌더러는 URL 문자열만 넘긴다 — 다운로드·저장 위치·경로 등록은 전부 main이 한다.
-  openPdfUrl: (url) => ipcRenderer.invoke('pdf:open-url', url),
+  // URL로 PDF 열기: 렌더러는 URL 문자열과 force 여부만 넘긴다 — 다운로드·저장 위치·경로 등록은 전부 main이 한다.
+  // force는 "이미 받아 둔 파일을 무시하고 다시 받는다"는 사용자의 명시적 요청(⌥+클릭)이다.
+  openPdfUrl: (url, opts) => ipcRenderer.invoke('pdf:open-url', url, opts),
   translatePdf: (payload) => ipcRenderer.invoke('pdf:translate', payload),
   cancelTranslate: () => ipcRenderer.invoke('pdf:translate:cancel'),
   // 논문 요약: 본문 텍스트는 렌더러가 뽑아 보낸다(pdf.js가 렌더러에만 있다). 경로는 main이 검문한다.

@@ -7,23 +7,115 @@
 <link rel="stylesheet" href="./app.css" />
 <link rel="stylesheet" href="./pdf_viewer.css" />
 <style>
-  html, body { margin: 0; height: 100%; background:#1e1e1e; }
+  /* ===== 테마 팔레트 =====
+     색을 역할 이름으로만 부르는 이유: 라이트 테마에서 값이 뒤집히기 때문이다(다크에서 "떠 있는"
+     표면은 더 밝고, 라이트에서는 더 어둡다). --gray-333 같은 이름을 쓰면 라이트에서 이름이 거짓말을 한다.
+     :root는 다크 값이며, 기존 하드코딩 값을 그대로 옮겨 다크 렌더는 변하지 않는다.
+     표면 사다리(다크: 어두운 → 밝은 = 아래로 갈수록 "위에 떠 있는" 층):
+       bg < input < panel < drawer < pdf-bg < tab < btn < tab-hover < btn-hover, code는 유일하게 bg보다 음각.
+     라이트는 이 사다리를 그대로 뒤집는다(밝은 → 어두운). */
+  :root {
+    /* 표면 */
+    --bg:            #1e1e1e;   /* 창 바탕 — 툴바·상태바·다이얼로그 */
+    --bg-input:      #222;      /* 텍스트 입력 */
+    --bg-panel:      #232323;   /* 요약 패널(세 번째 열) */
+    --bg-panel-veil: #232323e6; /* 요약 진행 오버레이 — 패널 위에 반투명으로 겹친다 */
+    --bg-drawer:     #242424;   /* TOC·목차 드로어 */
+    --pdf-bg:        #2a2a2a;   /* .pdf-container — 흰 페이지가 놓이는 바닥 */
+    --bg-veil:       #2a2a2ae6; /* pdf-busy 오버레이 — pdf-bg 위에 반투명으로 겹친다 */
+    --bg-tab:        #2c2c2c;   /* 요약 탭 */
+    --bg-tab-hover:  #383838;
+    --bg-btn:        #333;      /* 버튼 및 hover로 집히는 행(.toc-item) */
+    --bg-btn-hover:  #444;
+    --bg-code:       #1c1c1c;   /* 코드 블록 — 유일하게 바탕보다 음각인 표면 */
+    --bg-track:      #444;      /* 진행 막대의 빈 트랙 */
+    --bg-close:      #333c;     /* pane 닫기 칩 — 문서 위에 뜨므로 반투명 */
+    /* 테두리 — 굵기가 아니라 "얼마나 눈에 띄는가"로 3단계 */
+    --border:        #555;      /* 버튼·입력·다이얼로그 */
+    --border-soft:   #444;      /* 코드 블록·구분선 */
+    --border-faint:  #333;      /* pane/드로어 사이 칸막이 */
+    --border-tab:    #484848;
+    --page-border:   #444;      /* PDF 페이지 외곽선 */
+    /* 전경 — 강한 쪽에서 흐린 쪽으로 7단계 */
+    --fg-strong:     #fff;      /* 제목·강조 */
+    --fg:            #ddd;      /* 본문 */
+    --fg-muted:      #ccc;      /* 드로어 항목·설정 라벨 */
+    --fg-dim:        #bbb;      /* 보조 텍스트 */
+    --fg-subtle:     #999;      /* 섹션 소제목 */
+    --fg-faint:      #888;      /* 힌트 */
+    --fg-ghost:      #666;      /* 비활성·최하위 힌트 */
+    /* 강조와 의미색 */
+    --accent:        #0a84ff;
+    --accent-hover:  #3d9bff;
+    --accent-soft:   #0a84ff55; /* 인용문 세로줄 */
+    --accent-fg:     #fff;      /* 채워진 색면 위 글자 — 두 테마 모두 흰색 */
+    --info:          #9cdcfe;   /* 상태바·진행 표시·코드 */
+    --info-rgb:      156, 220, 254; /* 펄스 애니메이션이 알파를 섞어 써야 해서 성분으로도 둔다 */
+    --danger:        #f48771;   /* 오류 문구 */
+    --danger-bg:     #a33;      /* 파괴적 동작 버튼(닫기) hover */
+    --warn:          #e0a030;
+    --backdrop:      rgba(0, 0, 0, 0.5);
+  }
+  /* 라이트 — app.js가 <html data-theme="light">를 세우면 켜진다.
+     본문 바탕을 순백으로 두면 흰 PDF 페이지와 바닥이 붙어버리고 눈도 피로해서, 밝은 회색에서 시작한다.
+     본문 글자는 #000 대신 #23292f (--bg 위 대비 13.5:1). 전 단계가 --bg 위에서 AA(4.5:1)를 넘는다. */
+  :root[data-theme="light"] {
+    --bg:            #f4f5f7;
+    --bg-input:      #ecedf1;
+    --bg-panel:      #eaebef;
+    --bg-panel-veil: #eaebefe6;
+    --bg-drawer:     #e8e9ee;
+    --pdf-bg:        #dfe2e8;
+    --bg-veil:       #dfe2e8e6;
+    --bg-tab:        #dee0e6;
+    --bg-tab-hover:  #d1d4dc;
+    --bg-btn:        #dcdee5;
+    --bg-btn-hover:  #c9cdd6;
+    --bg-code:       #fff;      /* 음각 표면이므로 라이트에서는 바탕보다 밝은 흰색 */
+    --bg-track:      #d3d7de;
+    --bg-close:      #e8eaeecc;
+    --border:        #b3b9c1;
+    --border-soft:   #cdd2d9;
+    --border-faint:  #dee1e6;
+    --border-tab:    #c6cbd2;
+    --page-border:   #c8ccd3;
+    --fg-strong:     #12161b;
+    --fg:            #23292f;
+    --fg-muted:      #313944;
+    --fg-dim:        #3c4551;
+    --fg-subtle:     #495260;
+    --fg-faint:      #525b67;
+    --fg-ghost:      #5b6470;
+    /* #0a84ff는 흰 글자를 얹으면 3.65:1로 AA에 못 미친다 → 라이트에서는 어둡게 내려 5.6:1 */
+    --accent:        #0060df;
+    --accent-hover:  #0050bd;
+    --accent-soft:   #0060df55;
+    --accent-fg:     #fff;
+    --info:          #0b5f86;
+    --info-rgb:      11, 95, 134;
+    --danger:        #b3261e;
+    --danger-bg:     #b3261e;
+    --warn:          #8a5a00;
+    --backdrop:      rgba(0, 0, 0, 0.35);
+  }
+
+  html, body { margin: 0; height: 100%; background:var(--bg); }
   /* 컨트롤이 많아 1280px 창에서는 가로가 빠듯하다. 줄바꿈을 막지 않으면 버튼 라벨이 한 글자씩
      세로로 접혀 읽을 수 없게 되므로, 접히는 대신 툴바가 가로로 스크롤되게 한다. */
-  #toolbar { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: #1e1e1e; color: #ddd; font: 13px sans-serif; overflow-x: auto; overflow-y: hidden; }
+  #toolbar { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: var(--bg); color: var(--fg); font: 13px sans-serif; overflow-x: auto; overflow-y: hidden; }
   #toolbar::-webkit-scrollbar { height: 0; }
   #toolbar > *, #pdf-controls > *, #diff-controls > * { flex: 0 0 auto; }
   #toolbar button, #toolbar span { white-space: nowrap; }
-  #toolbar button { background: #333; color: #ddd; border: 1px solid #555; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
-  #toolbar button:hover { background: #444; }
-  #toolbar button:disabled { opacity: 0.4; cursor: default; background: #333; }
+  #toolbar button { background: var(--bg-btn); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+  #toolbar button:hover { background: var(--bg-btn-hover); }
+  #toolbar button:disabled { opacity: 0.4; cursor: default; background: var(--bg-btn); }
   /* 토글이 ON일 때 버튼 강조 (Dict/Fit/Sync/Night). Switch는 액션이라 ON 개념이 없어 제외. */
-  #toolbar button.on { background:#0a84ff; border-color:#0a84ff; color:#fff; }
-  #toolbar button.on:hover { background:#3d9bff; }
-  #toolbar input { background:#222; color:#ddd; border:1px solid #555; border-radius:4px; }
-  #diff-controls, #pdf-controls { display:flex; align-items:center; gap:6px; color:#bbb; }
-  #pdf-find-count { min-width:104px; font:11px monospace; color:#9cdcfe; }
-  #pdf-find-count.miss { color:#f48771; }
+  #toolbar button.on { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
+  #toolbar button.on:hover { background:var(--accent-hover); }
+  #toolbar input { background:var(--bg-input); color:var(--fg); border:1px solid var(--border); border-radius:4px; }
+  #diff-controls, #pdf-controls { display:flex; align-items:center; gap:6px; color:var(--fg-dim); }
+  #pdf-find-count { min-width:104px; font:11px monospace; color:var(--info); }
+  #pdf-find-count.miss { color:var(--danger); }
   #diff-wrap, #pdfview { height: calc(100% - 36px - 22px); }
   #diff-wrap { display:flex; }
   #editor { flex:1; min-width:0; height:100%; }
@@ -32,7 +124,7 @@
      요약 패널을 .pdf-pane의 형제로 바로 넣지 않는 이유: 아래 `.pdf-pane:last-child`가
      오른쪽 pane을 가려내는 선택자라, 세 번째 형제가 생기면 그 판별이 통째로 어긋난다. */
   .pdf-panes { flex:1; display:flex; min-width:0; }
-  .pdf-pane { flex:1; position:relative; min-width:0; border-right:1px solid #333; display:flex; }
+  .pdf-pane { flex:1; position:relative; min-width:0; border-right:1px solid var(--border-faint); display:flex; }
   .pdf-pane:last-child { border-right:none; }
 
   /* 보기 형태 3종 — 어떤 열을 보여줄지만 CSS로 끊는다. 문서 로드 상태는 건드리지 않으므로
@@ -49,34 +141,36 @@
   /* Markdown TOC 드로어 — #diff-wrap의 좌/우 flex 자식. DOM 순서(left, editor, right)로
      오른쪽 드로어가 창의 오른쪽 끝에 온다. 표시/숨김은 .show 클래스로 제어.
      Monaco는 automaticLayout:true라 드로어 폭 변화에 스스로 재배치된다. */
-  .md-toc { flex:0 0 200px; display:none; overflow:auto; background:#242424; color:#ccc;
+  .md-toc { flex:0 0 200px; display:none; overflow:auto; background:var(--bg-drawer); color:var(--fg-muted);
     font:12px sans-serif; padding:4px; }
   .md-toc.show { display:block; }
-  #md-toc-left { border-right:1px solid #333; }
-  #md-toc-right { border-left:1px solid #333; }
+  #md-toc-left { border-right:1px solid var(--border-faint); }
+  #md-toc-right { border-left:1px solid var(--border-faint); }
   .pdf-viewer-host { flex:1; position:relative; min-width:0; }
-  .pdf-container { position:absolute; inset:0; overflow:auto; background:#2a2a2a; }
+  .pdf-container { position:absolute; inset:0; overflow:auto; background:var(--pdf-bg); }
 
   /* 목차(TOC) 드로어 — 뷰어를 겹치지 않고 flex 2열로 밀어낸다(겹치면 page-width 왼쪽이 가려짐).
      열고 닫을 때 dualView가 applyFit으로 폭을 재계산한다. */
-  .pdf-outline { flex:0 0 200px; display:none; overflow:auto; background:#242424;
-    border-right:1px solid #333; color:#ccc; font:12px sans-serif; padding:4px; }
+  .pdf-outline { flex:0 0 200px; display:none; overflow:auto; background:var(--bg-drawer);
+    border-right:1px solid var(--border-faint); color:var(--fg-muted); font:12px sans-serif; padding:4px; }
   .pdf-pane.outline-open .pdf-outline { display:block; }
   /* 오른쪽 pane에서는 목차 드로어를 뷰어 오른쪽(창의 오른쪽 끝)에 붙인다.
      flex 자식 기본 order 0 → outline만 order:1이면 viewer-host 뒤로 밀린다.
      .pdf-close/.pdf-busy는 absolute라 order 영향을 받지 않는다. */
-  .pdf-pane:last-child .pdf-outline { order:1; border-right:none; border-left:1px solid #333; }
+  .pdf-pane:last-child .pdf-outline { order:1; border-right:none; border-left:1px solid var(--border-faint); }
   .toc-item { display:flex; align-items:center; gap:2px; padding:2px 4px; border-radius:3px;
     cursor:pointer; white-space:nowrap; }
-  .toc-item:hover { background:#333; }
-  .toc-item.disabled { color:#666; cursor:default; }
+  .toc-item:hover { background:var(--bg-btn); }
+  .toc-item.disabled { color:var(--fg-ghost); cursor:default; }
   .toc-title { overflow:hidden; text-overflow:ellipsis; }
-  .toc-toggle { flex:0 0 12px; color:#888; text-align:center; }
+  .toc-toggle { flex:0 0 12px; color:var(--fg-faint); text-align:center; }
   .toc-kids { margin-left:12px; }
   .toc-kids.collapsed { display:none; }
-  .toc-empty { color:#666; padding:6px 4px; }
+  .toc-empty { color:var(--fg-ghost); padding:6px 4px; }
 
-  /* PDF 야간 모드 — 페이지 canvas만 반전한다. 마커/펄스는 canvas의 형제 레이어라 원색 유지. */
+  /* PDF 야간 모드 — 페이지 canvas만 반전한다. 마커/펄스는 canvas의 형제 레이어라 원색 유지.
+     여기 색만은 테마 변수를 쓰지 않는다: 반전된 페이지는 라이트 테마에서도 어두우므로
+     바닥과 하이라이트도 함께 어두워야 짝이 맞는다(테마를 따라가면 야간 모드가 무너진다). */
   #pdfview.night .pdf-container { background:#161616;
     /* 반전된 어두운 캔버스 위 검색 하이라이트 대비 보정 (pdf.js CSS 변수) */
     --highlight-bg-color: rgba(64, 200, 255, 0.45);
@@ -85,72 +179,83 @@
   /* multiply 형광펜은 어두운 캔버스에서 안 보인다 → 야간에는 screen으로 보정 */
   #pdfview.night .wc-mark-highlight { mix-blend-mode: screen; }
 
-  /* 미러 점프 도착 지점 펄스 (1.5초 일회성) */
+  /* 미러 점프 도착 지점 펄스 (1.5초 일회성).
+     테마를 따르지 않는다: 이 표시는 앱 크롬이 아니라 PDF 페이지 canvas 위에 얹히는데,
+     그 canvas는 평소 흰 종이이고 야간 모드에서는 반전되어 거의 검정이 된다. 테마색을 쓰면
+     라이트 테마의 어두운 --info(#0b5f86)가 반전된 페이지에 묻힌다(2.69:1). 밝은 하늘색은
+     흰 종이(7:1)와 반전된 페이지(12.7:1) 양쪽에서 모두 보인다. */
   .wc-pulse { position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px; border-radius:50%;
     background:#9cdcfe; pointer-events:none; z-index:4; animation: wc-pulse 1.5s ease-out forwards; }
   @keyframes wc-pulse {
-    0% { box-shadow:0 0 0 0 rgba(156,220,254,.85); opacity:.95; }
-    100% { box-shadow:0 0 0 44px rgba(156,220,254,0); opacity:0; } }
+    0% { box-shadow:0 0 0 0 rgba(156, 220, 254, .85); opacity:.95; }
+    100% { box-shadow:0 0 0 44px rgba(156, 220, 254, 0); opacity:0; } }
   /* 마커(형광펜/밑줄). 페이지 div의 마지막 자식으로 붙고, 좌표는 % 라 줌/리사이즈를 CSS가 따라간다.
      pointer-events:none 이라 텍스트 선택·링크 클릭을 가로막지 않는다. */
   .wc-marker-layer { position:absolute; inset:0; pointer-events:none; z-index:3; }
   .wc-mark { position:absolute; }
+  /* multiply는 "페이지 canvas 위"에서 일어난다 — 페이지는 두 테마 모두 흰 종이라 blend는 그대로다.
+     (--pdf-bg가 밝아져도 마커는 페이지 안에만 놓이므로 영향이 없다) */
   .wc-mark-highlight { mix-blend-mode:multiply; border-radius:2px; } /* 글자가 비쳐 보이게 */
   .wc-mark-underline { box-shadow: inset 0 -2px 0 currentColor; }
 
   /* pane 우상단 닫기 버튼 — 문서가 로드된 pane에만 보인다 */
   .pdf-close { display:none; position:absolute; top:6px; right:14px; z-index:4;
     width:22px; height:22px; padding:0; line-height:1; border-radius:50%;
-    background:#333c; color:#bbb; border:1px solid #555; cursor:pointer; font:12px sans-serif; }
+    background:var(--bg-close); color:var(--fg-dim); border:1px solid var(--border); cursor:pointer; font:12px sans-serif; }
   .pdf-pane.loaded .pdf-close { display:block; }
-  .pdf-close:hover { background:#a33; color:#fff; }
+  .pdf-close:hover { background:var(--danger-bg); color:var(--accent-fg); }
 
   /* 오래 걸리는 작업(번역)을 해당 pane 위에 겹쳐 표시 */
   .pdf-busy { position:absolute; inset:0; z-index:5; display:flex; flex-direction:column;
-    align-items:center; justify-content:center; gap:8px; background:#2a2a2ae6;
-    color:#ddd; font:13px sans-serif; text-align:center; padding:16px; }
-  .pdf-busy-spin { width:26px; height:26px; border:3px solid #555; border-top-color:#9cdcfe;
+    align-items:center; justify-content:center; gap:8px; background:var(--bg-veil);
+    color:var(--fg); font:13px sans-serif; text-align:center; padding:16px; }
+  .pdf-busy-spin { width:26px; height:26px; border:3px solid var(--border); border-top-color:var(--info);
     border-radius:50%; animation:pdf-spin 0.9s linear infinite; }
   @keyframes pdf-spin { to { transform:rotate(360deg); } }
-  .pdf-busy-title { font-size:14px; color:#fff; }
+  .pdf-busy-title { font-size:14px; color:var(--fg-strong); }
   /* 번역은 "n / N 페이지"처럼 짧지만 URL 다운로드는 긴 주소가 들어온다 → 넘치지 않게 접는다. */
-  .pdf-busy-sub { color:#9cdcfe; font:12px monospace; max-width:90%; word-break:break-all; }
-  .pdf-busy-bar { width:min(260px, 70%); height:4px; background:#444; border-radius:2px; overflow:hidden; }
-  .pdf-busy-bar > i { display:block; height:100%; background:#9cdcfe; width:0; transition:width .3s; }
-  .pdf-busy-hint { color:#888; font-size:11px; }
+  .pdf-busy-sub { color:var(--info); font:12px monospace; max-width:90%; word-break:break-all; }
+  .pdf-busy-bar { width:min(260px, 70%); height:4px; background:var(--bg-track); border-radius:2px; overflow:hidden; }
+  .pdf-busy-bar > i { display:block; height:100%; background:var(--info); width:0; transition:width .3s; }
+  .pdf-busy-hint { color:var(--fg-faint); font-size:11px; }
   /* 빈 pane의 "URL로 PDF 열기" — 문서가 로드되면 CSS만으로 사라진다(.loaded는 dualView가 붙인다).
      컨테이너는 pointer-events:none 이라 빈 영역의 드래그&드롭을 가로막지 않고,
      실제로 조작할 입력 행만 pointer-events를 되살린다. */
+  /* 배경을 깔아 두는 이유: 이 패널은 .pdf-container 위에 겹치는데, 야간 모드는 그 바닥을
+     테마와 무관하게 #161616으로 고정한다. 배경 없이 전경색만 쓰면 라이트 테마 + 야간 모드에서
+     "검은 바닥 + 어두운 글자"가 되어 안내문이 안 읽힌다(실측 1.86:1).
+     --bg-veil은 다크에서 --pdf-bg와 같은 색이라 평소 렌더는 달라지지 않는다.
+     pointer-events:none은 그대로 — 배경이 생겨도 빈 pane의 드래그&드롭은 계속 통과한다. */
   .pdf-url { position:absolute; inset:0; z-index:2; display:flex; flex-direction:column;
-    align-items:center; justify-content:center; gap:8px; padding:16px;
-    color:#bbb; font:13px sans-serif; text-align:center; pointer-events:none; }
+    align-items:center; justify-content:center; gap:8px; padding:16px; background:var(--bg-veil);
+    color:var(--fg-dim); font:13px sans-serif; text-align:center; pointer-events:none; }
   .pdf-pane.loaded .pdf-url { display:none; }
-  .pdf-url-title { color:#999; }
+  .pdf-url-title { color:var(--fg-subtle); }
   .pdf-url-row { display:flex; gap:6px; pointer-events:auto; }
-  .pdf-url-input { width:min(380px, 46vw); background:#222; color:#ddd; border:1px solid #555;
+  .pdf-url-input { width:min(380px, 46vw); background:var(--bg-input); color:var(--fg); border:1px solid var(--border);
     border-radius:4px; padding:5px 8px; font:13px sans-serif; }
-  .pdf-url-input:focus { outline:none; border-color:#0a84ff; }
-  .pdf-url-go { background:#333; color:#ddd; border:1px solid #555; border-radius:4px;
+  .pdf-url-input:focus { outline:none; border-color:var(--accent); }
+  .pdf-url-go { background:var(--bg-btn); color:var(--fg); border:1px solid var(--border); border-radius:4px;
     padding:5px 12px; cursor:pointer; font:13px sans-serif; }
-  .pdf-url-go:hover { background:#444; }
+  .pdf-url-go:hover { background:var(--bg-btn-hover); }
   .pdf-url-input:disabled, .pdf-url-go:disabled { opacity:0.4; cursor:default; }
-  .pdf-url-msg { color:#f48771; font-size:11px; max-width:90%; min-height:14px; word-break:break-word; }
-  .pdf-url-hint { color:#666; font-size:11px; }
+  .pdf-url-msg { color:var(--danger); font-size:11px; max-width:90%; min-height:14px; word-break:break-word; }
+  .pdf-url-hint { color:var(--fg-ghost); font-size:11px; }
   /* ===== 논문 요약 패널 (세 번째 열) =====
      빈 상태(.sum-empty)·진행(.sum-busy)은 패널 위에 겹치는 오버레이라 .pdf-summary가 기준 박스가 된다.
      주의: .sum-empty/.sum-busy/.sum-err는 JS가 inline display를 직접 세운다(표시 여부는 JS 소관) →
      여기서는 display를 쓰지 않고 정렬만 잡는다. 그렇지 않으면 CSS 선언이 조용히 무시된다. */
   .pdf-summary { position:relative; flex:0 0 clamp(300px, 30%, 560px); min-width:0;
-    display:flex; flex-direction:column; border-left:1px solid #333;
-    background:#232323; color:#ddd; font:13px sans-serif; }
-  .sum-tabs { display:flex; align-items:center; gap:4px; padding:6px; border-bottom:1px solid #333; }
-  .sum-tab { background:#2c2c2c; color:#bbb; border:1px solid #484848; border-radius:4px;
+    display:flex; flex-direction:column; border-left:1px solid var(--border-faint);
+    background:var(--bg-panel); color:var(--fg); font:13px sans-serif; }
+  .sum-tabs { display:flex; align-items:center; gap:4px; padding:6px; border-bottom:1px solid var(--border-faint); }
+  .sum-tab { background:var(--bg-tab); color:var(--fg-dim); border:1px solid var(--border-tab); border-radius:4px;
     padding:3px 10px; cursor:pointer; font:12px sans-serif; }
-  .sum-tab:hover { background:#383838; }
-  .sum-tab.on { background:#0a84ff; border-color:#0a84ff; color:#fff; } /* 툴바 토글과 같은 강조 관용구 */
-  .sum-regen { margin-left:auto; background:#333; color:#bbb; border:1px solid #555;
+  .sum-tab:hover { background:var(--bg-tab-hover); }
+  .sum-tab.on { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); } /* 툴바 토글과 같은 강조 관용구 */
+  .sum-regen { margin-left:auto; background:var(--bg-btn); color:var(--fg-dim); border:1px solid var(--border);
     border-radius:4px; padding:3px 8px; cursor:pointer; font:11px sans-serif; }
-  .sum-regen:hover { background:#444; }
+  .sum-regen:hover { background:var(--bg-btn-hover); }
   .sum-regen:disabled, .sum-tab:disabled { opacity:0.4; cursor:default; }
   .sum-body { flex:1; min-height:0; overflow:auto; padding:10px 12px; }
   /* 필수: 흐름도는 pane이 실제 폭을 가질 때만 렌더된다(mermaid가 폭을 재야 한다) →
@@ -158,67 +263,80 @@
   .sum-pane { display:none; }
   .sum-pane.on { display:block; }
   .sum-pane[data-kind=flow] svg { max-width:100%; height:auto; }
-  .sum-err { color:#f48771; font-size:12px; margin:8px 0; white-space:pre-wrap; word-break:break-word; }
-  .sum-code { background:#1c1c1c; border:1px solid #444; border-radius:4px; padding:8px;
-    color:#bbb; font:11px monospace; white-space:pre-wrap; word-break:break-all; max-height:40vh; overflow:auto; }
+  .sum-err { color:var(--danger); font-size:12px; margin:8px 0; white-space:pre-wrap; word-break:break-word; }
+  .sum-code { background:var(--bg-code); border:1px solid var(--border-soft); border-radius:4px; padding:8px;
+    color:var(--fg-dim); font:11px monospace; white-space:pre-wrap; word-break:break-all; max-height:40vh; overflow:auto; }
 
   .sum-empty { position:absolute; inset:0; z-index:2; flex-direction:column;
     align-items:center; justify-content:center; gap:8px; padding:16px; text-align:center; }
-  .sum-empty-title { color:#999; }
-  .sum-empty-go { background:#333; color:#ddd; border:1px solid #555; border-radius:4px;
+  .sum-empty-title { color:var(--fg-subtle); }
+  .sum-empty-go { background:var(--bg-btn); color:var(--fg); border:1px solid var(--border); border-radius:4px;
     padding:6px 14px; cursor:pointer; font:13px sans-serif; }
-  .sum-empty-go:hover { background:#444; }
+  .sum-empty-go:hover { background:var(--bg-btn-hover); }
   .sum-empty-go:disabled { opacity:0.4; cursor:default; }
-  .sum-empty-hint { color:#666; font-size:11px; max-width:90%; }
+  .sum-empty-hint { color:var(--fg-ghost); font-size:11px; max-width:90%; }
 
   /* 진행 오버레이 — pdf-busy와 같은 모양새로 맞춘다(같은 종류의 기다림이라 같아 보여야 한다) */
   .sum-busy { position:absolute; inset:0; z-index:3; flex-direction:column;
-    align-items:center; justify-content:center; gap:8px; background:#232323e6; padding:16px; text-align:center; }
-  .sum-busy-spin { width:26px; height:26px; border:3px solid #555; border-top-color:#9cdcfe;
+    align-items:center; justify-content:center; gap:8px; background:var(--bg-panel-veil); padding:16px; text-align:center; }
+  .sum-busy-spin { width:26px; height:26px; border:3px solid var(--border); border-top-color:var(--info);
     border-radius:50%; animation:pdf-spin 0.9s linear infinite; }
-  .sum-busy-title { font-size:14px; color:#fff; }
-  .sum-busy-sub { color:#9cdcfe; font:12px monospace; }
-  .sum-busy-bar { width:min(220px, 70%); height:4px; background:#444; border-radius:2px; overflow:hidden; }
-  .sum-busy-bar > i { display:block; height:100%; background:#9cdcfe; width:0; transition:width .3s; }
-  .sum-busy-hint { color:#888; font-size:11px; }
+  .sum-busy-title { font-size:14px; color:var(--fg-strong); }
+  .sum-busy-sub { color:var(--info); font:12px monospace; }
+  .sum-busy-bar { width:min(220px, 70%); height:4px; background:var(--bg-track); border-radius:2px; overflow:hidden; }
+  .sum-busy-bar > i { display:block; height:100%; background:var(--info); width:0; transition:width .3s; }
+  .sum-busy-hint { color:var(--fg-faint); font-size:11px; }
 
   /* 마크다운 렌더 결과(markdownLite). LLM 출력이라 innerHTML 없이 DOM으로만 만들어진다. */
-  .md-h1, .md-h2, .md-h3, .md-h4, .md-h5, .md-h6 { color:#fff; margin:14px 0 6px; line-height:1.35; }
+  .md-h1, .md-h2, .md-h3, .md-h4, .md-h5, .md-h6 { color:var(--fg-strong); margin:14px 0 6px; line-height:1.35; }
   .md-h1 { font-size:17px; } .md-h2 { font-size:15px; } .md-h3 { font-size:14px; }
-  .md-h4, .md-h5, .md-h6 { font-size:13px; color:#ddd; }
+  .md-h4, .md-h5, .md-h6 { font-size:13px; color:var(--fg); }
   .sum-pane > .md-h1:first-child, .sum-pane > .md-h2:first-child { margin-top:0; }
-  .md-p { margin:6px 0; line-height:1.65; color:#ddd; }
+  .md-p { margin:6px 0; line-height:1.65; color:var(--fg); }
   .md-ul, .md-ol { margin:6px 0; padding-left:20px; }
   .md-li { margin:3px 0; line-height:1.6; }
-  .md-quote { margin:8px 0; padding:2px 0 2px 10px; border-left:3px solid #0a84ff55; color:#bbb; }
-  .md-pre { background:#1c1c1c; border:1px solid #444; border-radius:4px; padding:8px;
+  .md-quote { margin:8px 0; padding:2px 0 2px 10px; border-left:3px solid var(--accent-soft); color:var(--fg-dim); }
+  .md-pre { background:var(--bg-code); border:1px solid var(--border-soft); border-radius:4px; padding:8px;
     overflow:auto; margin:8px 0; }
-  .md-code { font:11px monospace; color:#9cdcfe; }
-  .md-icode { background:#1c1c1c; border-radius:3px; padding:1px 4px; font:11px monospace; color:#9cdcfe; }
-  .md-strong { color:#fff; }
-  .md-em { color:#ddd; }
-  .md-hr { border:none; border-top:1px solid #444; margin:12px 0; }
-  .pdfViewer .page { margin:8px auto; border:1px solid #444; }
-  #statusbars { height: 22px; display: flex; background: #1e1e1e; color: #9cdcfe; font: 12px monospace; }
+  .md-code { font:11px monospace; color:var(--info); }
+  .md-icode { background:var(--bg-code); border-radius:3px; padding:1px 4px; font:11px monospace; color:var(--info); }
+  .md-strong { color:var(--fg-strong); }
+  .md-em { color:var(--fg); }
+  .md-hr { border:none; border-top:1px solid var(--border-soft); margin:12px 0; }
+  .pdfViewer .page { margin:8px auto; border:1px solid var(--page-border); }
+  #statusbars { height: 22px; display: flex; background: var(--bg); color: var(--info); font: 12px monospace; }
   #statusbars > div { flex: 1; padding: 0 8px; overflow: hidden; white-space: nowrap; opacity: 0.5; }
   #statusbars > div.active { opacity: 1; }
-  #pdf-status { display:none; height:22px; background:#1e1e1e; color:#9cdcfe; font:12px monospace; align-items:center; padding:0 8px; }
+  /* 같은 opacity라도 배경이 밝을수록 대비가 더 많이 죽는다 — 0.5로 두면 라이트에서 2.3:1까지 떨어져
+     "읽히되 물러나 있는" 비활성 느낌이 아니라 그냥 안 보인다. 라이트에서만 올려 다크(3.8:1)와 짝을 맞춘다. */
+  :root[data-theme="light"] #statusbars > div { opacity: 0.75; }
+  #pdf-status { display:none; height:22px; background:var(--bg); color:var(--info); font:12px monospace; align-items:center; padding:0 8px; }
 
-  /* 모달 다이얼로그 다크 스타일 (프로젝트 이름 입력 / 설정) */
-  dialog { background:#1e1e1e; color:#ddd; border:1px solid #555; border-radius:6px;
+  /* 모달 다이얼로그 (프로젝트 이름 입력 / 설정) */
+  dialog { background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;
     padding:16px; font:13px sans-serif; }
-  dialog::backdrop { background:rgba(0,0,0,0.5); }
-  dialog input[type=text] { background:#222; color:#ddd; border:1px solid #555; border-radius:4px; padding:4px 6px; }
-  dialog button { background:#333; color:#ddd; border:1px solid #555; border-radius:4px; padding:3px 10px; cursor:pointer; margin-left:6px; }
-  dialog button:hover { background:#444; }
+  dialog::backdrop { background:var(--backdrop); }
+  /* type을 생략한 입력(#set-agy-model, #set-claude-model)까지 함께 잡는다.
+     [type=text]만 겨냥하면 그 둘이 네이티브 흰 입력으로 남아 다크에서 구멍처럼 보였다 —
+     테마를 실제로 동작하는 기능으로 만드는 이상 반쪽만 따르는 컨트롤을 남길 이유가 없다.
+     체크박스는 네이티브 렌더가 맞으므로 제외한다. */
+  dialog input:not([type=checkbox]) { background:var(--bg-input); color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:4px 6px; }
+  dialog button { background:var(--bg-btn); color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:3px 10px; cursor:pointer; margin-left:6px; }
+  dialog button:hover { background:var(--bg-btn-hover); }
+  /* select는 브라우저 기본 스타일이 항상 밝은 색이라 다크에서 홀로 튄다 → 입력·버튼과 같은 옷을 입힌다.
+     화살표는 기본 렌더러가 color를 따라 그리므로 appearance는 건드리지 않는다.
+     열린 목록(option)은 OS가 그리는 영역이라 여기서 색을 강제해도 무시될 수 있다. */
+  dialog select { background:var(--bg-input); color:var(--fg); border:1px solid var(--border);
+    border-radius:4px; padding:3px 6px; font:13px sans-serif; cursor:pointer; }
+  dialog select option { background:var(--bg-input); color:var(--fg); }
 
   /* 설정창 단축키 섹션 */
   .sc-row { display:flex; align-items:center; gap:8px; margin:5px 0; }
-  .sc-row .sc-label { flex:0 0 150px; color:#ccc; }
-  .sc-row .sc-key { flex:0 0 96px; background:#222; color:#ddd; border:1px solid #555; border-radius:4px;
+  .sc-row .sc-label { flex:0 0 150px; color:var(--fg-muted); }
+  .sc-row .sc-key { flex:0 0 96px; background:var(--bg-input); color:var(--fg); border:1px solid var(--border); border-radius:4px;
     padding:4px 6px; text-align:center; font:13px sans-serif; cursor:pointer; }
-  .sc-row .sc-key.capturing { border-color:#0a84ff; color:#9cdcfe; }
-  .sc-row .sc-warn { color:#e0a030; font-size:11px; }
+  .sc-row .sc-key.capturing { border-color:var(--accent); color:var(--info); }
+  .sc-row .sc-warn { color:var(--warn); font-size:11px; }
 </style>
 </head>
 <body>
@@ -256,8 +374,7 @@
       <button id="btn-switch">⇄ Switch</button>
       <button id="btn-translate">한국어 번역 ▶</button>
     </span>
-    <button id="btn-theme">Theme</button>
-    <span id="toolbar-status" style="margin-left:auto; color:#9cdcfe; font:12px monospace;"></span>
+    <span id="toolbar-status" style="margin-left:auto; color:var(--info); font:12px monospace;"></span>
   </div>
   <div id="diff-wrap">
     <div id="md-toc-left" class="md-toc"></div>
@@ -270,7 +387,7 @@
 
   <dialog id="project-name-dialog">
     <form method="dialog">
-      <div style="margin-bottom:8px; color:#ddd;">프로젝트 이름</div>
+      <div style="margin-bottom:8px; color:var(--fg);">프로젝트 이름</div>
       <input id="project-name-input" type="text" style="width:260px" autofocus />
       <div style="margin-top:10px; text-align:right;">
         <button value="cancel">취소</button>
@@ -280,38 +397,45 @@
   </dialog>
 
   <dialog id="settings-dialog">
-    <div style="color:#ddd; margin-bottom:10px; font-weight:bold;">설정</div>
+    <div style="color:var(--fg); margin-bottom:10px; font-weight:bold;">설정</div>
+    <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
+      <span style="width:70px; display:inline-block; color:var(--fg-dim);">테마</span>
+      <select id="set-theme">
+        <option value="dark">다크</option>
+        <option value="light">라이트</option>
+      </select>
+    </div>
     <div style="margin-bottom:8px;">
-      <div style="color:#999; font-size:11px;">기록 보관 위치</div>
+      <div style="color:var(--fg-subtle); font-size:11px;">기록 보관 위치</div>
       <input id="set-storage-path" type="text" readonly style="width:300px" />
       <button id="set-storage-change">변경…</button>
     </div>
     <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-archive-pdf" /> PDF를 열 때 보관 폴더에 사본 저장</label>
     <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-keep-translations" /> 번역본을 보관 폴더에 저장</label>
 
-    <div style="margin-top:12px; border-top:1px solid #444; padding-top:10px;">
-      <div style="color:#999; font-size:11px; margin-bottom:6px;">토글 단축키 (변경을 누르고 원하는 키 조합을 누르세요 · Esc 취소)</div>
+    <div style="margin-top:12px; border-top:1px solid var(--border-soft); padding-top:10px;">
+      <div style="color:var(--fg-subtle); font-size:11px; margin-bottom:6px;">토글 단축키 (변경을 누르고 원하는 키 조합을 누르세요 · Esc 취소)</div>
       <div id="shortcut-rows"></div>
     </div>
 
-    <div style="margin-top:12px; border-top:1px solid #444; padding-top:10px;">
-      <div style="color:#999; font-size:11px; margin-bottom:6px;">번역 엔진·모델 (비우면 엔진 기본값 사용)</div>
+    <div style="margin-top:12px; border-top:1px solid var(--border-soft); padding-top:10px;">
+      <div style="color:var(--fg-subtle); font-size:11px; margin-bottom:6px;">번역 엔진·모델 (비우면 엔진 기본값 사용)</div>
       <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
-        <span style="width:70px; display:inline-block; color:#ccc;">엔진</span>
+        <span style="width:70px; display:inline-block; color:var(--fg-muted);">엔진</span>
         <select id="set-translate-engine">
           <option value="agy">agy</option>
           <option value="claude">claude</option>
         </select>
       </div>
       <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
-        <span style="width:70px; display:inline-block; color:#ccc;">agy 모델</span>
+        <span style="width:70px; display:inline-block; color:var(--fg-muted);">agy 모델</span>
         <input id="set-agy-model" list="agy-model-list" placeholder="(기본값)" style="width:200px" />
         <datalist id="agy-model-list"></datalist>
         <button id="set-agy-refresh">목록 새로고침</button>
-        <span id="set-agy-refresh-status" style="color:#999; font-size:11px;"></span>
+        <span id="set-agy-refresh-status" style="color:var(--fg-subtle); font-size:11px;"></span>
       </div>
       <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
-        <span style="width:70px; display:inline-block; color:#ccc;">claude 모델</span>
+        <span style="width:70px; display:inline-block; color:var(--fg-muted);">claude 모델</span>
         <input id="set-claude-model" list="claude-model-list" placeholder="(기본값)" style="width:200px" />
         <datalist id="claude-model-list"></datalist>
       </div>

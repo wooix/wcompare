@@ -7,6 +7,11 @@ const fs = require('node:fs');
 const { makePdf } = require('../helpers/makePdf.js');
 
 const MAIN = path.join(__dirname, '..', '..', 'src', 'main', 'main.js');
+
+// e2e 공통: 렌더러가 localStorage에 남기는 UI 상태(보기 형태 wc-layout, Night, Dict)가
+// spec 사이로 새지 않도록 userData를 이 파일 전용 임시 폴더로 격리한다. 공유 프로필을 쓰면
+// 요약 패널이 열린 채로 시작해 pane 폭이 달라지고, 배율·스크롤을 재는 테스트가 실행 순서에 따라 흔들린다.
+const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ud-'));
 const L = '.pdf-pane[data-side=left]';
 const R = '.pdf-pane[data-side=right]';
 
@@ -22,7 +27,7 @@ function writeKoPair(tag) {
 test('야간 모드: 페이지 canvas만 반전되고 상태가 저장된다', async () => {
   const a = path.join(os.tmpdir(), `wc-m1-night-${Date.now()}.pdf`);
   fs.writeFileSync(a, makePdf(2, { height: 900 }));
-  const app = await electron.launch({ args: [MAIN, a] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${L} canvas`, { timeout: 20000 });
 
@@ -45,7 +50,7 @@ test('야간 모드: 페이지 canvas만 반전되고 상태가 저장된다', a
 
 test('미러 점프: Alt+클릭으로 반대편이 같은 위치로 이동하고 펄스가 뜬다', async () => {
   const { a, ko } = writeKoPair('jump' + Date.now());
-  const app = await electron.launch({ args: [MAIN, a, ko] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, ko] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${R} .textLayer span`, { timeout: 20000 });
 
@@ -76,7 +81,7 @@ test('미러 점프: Alt+클릭으로 반대편이 같은 위치로 이동하고
 test('TOC 패널: 목차가 뜨고 클릭하면 그 페이지로 이동하며 히스토리에 쌓인다', async () => {
   const a = path.join(os.tmpdir(), `wc-m1-toc-${Date.now()}.pdf`);
   fs.writeFileSync(a, makePdf(5, { height: 900, outline: true }));
-  const app = await electron.launch({ args: [MAIN, a] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${L} .textLayer span`, { timeout: 20000 });
 
@@ -104,7 +109,7 @@ test('TOC 패널: 목차가 뜨고 클릭하면 그 페이지로 이동하며 �
 test('목차 없는 PDF는 TOC 패널에 (목차 없음)을 보여준다', async () => {
   const a = path.join(os.tmpdir(), `wc-m1-notoc-${Date.now()}.pdf`);
   fs.writeFileSync(a, makePdf(2, { height: 900 }));
-  const app = await electron.launch({ args: [MAIN, a] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${L} canvas`, { timeout: 20000 });
 
@@ -120,7 +125,7 @@ test('오른쪽 pane의 TOC 드로어는 뷰어 오른쪽(창의 오른쪽 끝)�
   const b = path.join(os.tmpdir(), `wc-m1-rtoc-b-${Date.now()}.pdf`);
   fs.writeFileSync(a, makePdf(3, { height: 900, outline: true }));
   fs.writeFileSync(b, makePdf(3, { height: 900, outline: true }));
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${R} canvas`, { timeout: 20000 });
 
@@ -142,7 +147,7 @@ test('오른쪽 pane의 TOC 드로어는 뷰어 오른쪽(창의 오른쪽 끝)�
 });
 
 test('전체 텍스트 복사 IPC: main 경유로 클립보드에 기록된다', async () => {
-  const app = await electron.launch({ args: [MAIN] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`] });
   const win = await app.firstWindow();
   await win.waitForSelector('#toolbar', { timeout: 20000 });
 
@@ -156,7 +161,7 @@ test('전체 텍스트 복사 IPC: main 경유로 클립보드에 기록된다',
 test('메뉴에 Recent Files 서브메뉴가 있고, 연 파일이 기록된다', async () => {
   const a = path.join(os.tmpdir(), `wc-m1-rf-${Date.now()}.pdf`);
   fs.writeFileSync(a, makePdf(1, { height: 900 }));
-  const app = await electron.launch({ args: [MAIN, a] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${L} canvas`, { timeout: 20000 });
 

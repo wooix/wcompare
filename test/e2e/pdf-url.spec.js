@@ -44,7 +44,8 @@ async function openPdfMode(tag) {
   await win.waitForFunction(
     () => typeof document.getElementById('btn-mode').onclick === 'function', null, { timeout: 20000 });
   await setStorage(app, storageDir);
-  await win.click('#btn-mode'); // diff → pdf (여기서 dualView와 URL 패널이 만들어진다)
+  // 앱은 PDF 모드로 시작한다. 혹시 diff 상태면(모드 기본값이 바뀌어도 이 테스트가 버티도록) 한 번 눌러 전환한다.
+  if (await win.evaluate(() => window.__wc.getMode()) !== 'pdf') await win.click('#btn-mode');
   await expect(win.locator(`${L} .pdf-url-input`)).toBeVisible();
   return { dir, storageDir, app, win };
 }

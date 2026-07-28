@@ -6,6 +6,11 @@ const fs = require('node:fs');
 const { makePdf } = require('../helpers/makePdf.js');
 
 const MAIN = path.join(__dirname, '..', '..', 'src', 'main', 'main.js');
+
+// e2e 공통: 렌더러가 localStorage에 남기는 UI 상태(보기 형태 wc-layout, Night, Dict)가
+// spec 사이로 새지 않도록 userData를 이 파일 전용 임시 폴더로 격리한다. 공유 프로필을 쓰면
+// 요약 패널이 열린 채로 시작해 pane 폭이 달라지고, 배율·스크롤을 재는 테스트가 실행 순서에 따라 흔들린다.
+const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ud-'));
 const leftC = '.pdf-pane[data-side=left] .pdf-container';
 const rightC = '.pdf-pane[data-side=right] .pdf-container';
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
@@ -22,7 +27,7 @@ function writePair(tag) {
 // 따라서 아래 붙여넣기/복사 테스트만으로는 Edit 메뉴 누락 버그를 잡지 못한다(메뉴가 없어도 통과함).
 // 실제 회귀를 막는 것은 이 메뉴 구조 검사다.
 test('애플리케이션 메뉴에 Edit(복사/붙여넣기) 역할이 있다', async () => {
-  const app = await electron.launch({ args: [MAIN] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`] });
   await app.firstWindow();
   // Electron은 role 이름을 소문자로 정규화해 돌려준다 (selectAll → selectall)
   const roles = await app.evaluate(({ Menu }) => {
@@ -36,7 +41,7 @@ test('애플리케이션 메뉴에 Edit(복사/붙여넣기) 역할이 있다', 
 
 test('검색창에 붙여넣기가 된다', async () => {
   const { a, b } = writePair('paste' + Date.now());
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${rightC} canvas`, { timeout: 20000 });
 
@@ -54,7 +59,7 @@ test('검색창에 붙여넣기가 된다', async () => {
 
 test('PDF 텍스트를 드래그 선택하고 복사한다', async () => {
   const { a, b } = writePair('copy' + Date.now());
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${leftC} .textLayer span`, { timeout: 20000 });
 

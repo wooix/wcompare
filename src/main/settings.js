@@ -19,6 +19,12 @@ const DEFAULTS = {
     night: 'Alt+N',
     switch: 'Alt+ArrowRight',
   },
+  // 화면 테마. 최상위 문자열 키는 settingsStore가 "절대경로"만 통과시키므로(storageDir 하나를
+  // 위한 규칙) 여기에 그냥 theme:'dark'를 두면 저장이 조용히 무시된다 — 객체 키 하위값은
+  // 임의 문자열이 허용되므로 ui 아래에 둔다.
+  ui: {
+    theme: 'dark', // 'dark' | 'light'
+  },
   // 번역 AI 모델 선택. engine은 transpaper --engine에 그대로 전달(agy|claude).
   // agyModel/claudeModel이 빈 문자열이면 엔진 기본값을 쓴다(플래그 생략).
   // agyModels는 "목록 새로고침"(agy models)으로 채워지고, claudeModels는 자주 쓰는 값으로 미리 채운다.

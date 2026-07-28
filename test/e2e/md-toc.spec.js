@@ -6,6 +6,11 @@ const fs = require('node:fs');
 
 const MAIN = path.join(__dirname, '..', '..', 'src', 'main', 'main.js');
 
+// e2e 공통: 렌더러가 localStorage에 남기는 UI 상태(보기 형태 wc-layout, Night, Dict)가
+// spec 사이로 새지 않도록 userData를 이 파일 전용 임시 폴더로 격리한다. 공유 프로필을 쓰면
+// 요약 패널이 열린 채로 시작해 pane 폭이 달라지고, 배율·스크롤을 재는 테스트가 실행 순서에 따라 흔들린다.
+const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ud-'));
+
 // 헤딩 사이에 filler 본문을 넣어 아래쪽 헤딩 클릭 시 실제로 스크롤이 일어나게 한다.
 const filler = Array(15).fill('lorem ipsum body line').join('\n');
 const MD_A = ['# Alpha', filler, '## Beta', filler, '### Gamma', filler, '## Delta', filler].join('\n');
@@ -23,7 +28,7 @@ const valueHas = (win, side, s) => win.waitForFunction(
 test('MD TOC: 토글로 드로어가 뜨고 헤딩을 보여주며 항목 클릭 시 해당 라인으로 이동한다', async () => {
   const a = tmp('a', MD_A);
   const b = tmp('b', MD_B);
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector('.monaco-diff-editor', { timeout: 20000 });
   await valueHas(win, 'left', 'Alpha');
@@ -69,7 +74,7 @@ test('MD TOC: 토글로 드로어가 뜨고 헤딩을 보여주며 항목 클릭
 test('MD TOC: markdown 파일이 한쪽도 없으면 버튼이 비활성화된다', async () => {
   const a = tmp('txt', 'plain text left\n');
   const b = tmp('txt', 'plain text right\n');
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector('.monaco-diff-editor', { timeout: 20000 });
   await valueHas(win, 'left', 'plain text left');
@@ -83,7 +88,7 @@ test('MD TOC: markdown 파일이 한쪽도 없으면 버튼이 비활성화된�
 test('MD TOC: 한쪽만 markdown이면 그 side 드로어만 보인다', async () => {
   const a = tmp('a', MD_A);
   const b = tmp('txt', 'plain right side\n');
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector('.monaco-diff-editor', { timeout: 20000 });
   await valueHas(win, 'left', 'Alpha');

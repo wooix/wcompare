@@ -8,6 +8,11 @@ const fs = require('node:fs');
 const { makePdf } = require('../helpers/makePdf.js');
 
 const MAIN = path.join(__dirname, '..', '..', 'src', 'main', 'main.js');
+
+// e2e 공통: 렌더러가 localStorage에 남기는 UI 상태(보기 형태 wc-layout, Night, Dict)가
+// spec 사이로 새지 않도록 userData를 이 파일 전용 임시 폴더로 격리한다. 공유 프로필을 쓰면
+// 요약 패널이 열린 채로 시작해 pane 폭이 달라지고, 배율·스크롤을 재는 테스트가 실행 순서에 따라 흔들린다.
+const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ud-'));
 const rightC = '.pdf-pane[data-side=right] .pdf-container';
 
 function writePair(tag) {
@@ -25,7 +30,7 @@ const pct = (win) => win.evaluate(() => {
 
 test('Switch: 사용자가 정한 줌 배율이 좌우 교체 후에도 유지된다', async () => {
   const { a, b } = writePair('keep' + Date.now());
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${rightC} canvas`, { timeout: 20000 });
 
@@ -53,7 +58,7 @@ test('Switch: 사용자가 정한 줌 배율이 좌우 교체 후에도 유지�
 
 test('Switch (Sync OFF): 배율은 side가 아니라 문서를 따라 좌우로 맞바뀐다', async () => {
   const { a, b } = writePair('swoff' + Date.now());
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${rightC} canvas`, { timeout: 20000 });
 
@@ -92,7 +97,7 @@ test('Switch (Sync OFF): 배율은 side가 아니라 문서를 따라 좌우로 
 
 test('Switch: Fit ON 상태에서는 교체 후에도 Fit이 유지된다', async () => {
   const { a, b } = writePair('fiton' + Date.now());
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${rightC} canvas`, { timeout: 20000 });
   await expect(win.locator('#btn-fit')).toHaveText('Fit: ON'); // 최초 로드는 page-width(fit ON)

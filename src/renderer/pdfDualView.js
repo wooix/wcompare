@@ -50,17 +50,20 @@ function createUrlPanel(paneEl, submit) {
   const go = document.createElement('button');
   go.className = 'pdf-url-go';
   go.textContent = '열기';
+  go.title = '이미 받아 둔 파일이 있으면 그것을 엽니다 (⌥+클릭 = 서버에서 다시 받기)';
   row.append(input, go);
   const msg = document.createElement('div');
   msg.className = 'pdf-url-msg';
   const hint = document.createElement('div');
   hint.className = 'pdf-url-hint';
-  hint.textContent = '파일을 끌어다 놓거나 Open Left로 열 수도 있습니다';
+  hint.textContent = '파일을 끌어다 놓거나 Open Left로 열 수도 있습니다 · ⌥+열기 = 다시 받기';
   el.append(title, row, msg, hint);
   paneEl.appendChild(el);
 
   let pending = false;
-  async function run() {
+  // force=true면 이미 받아 둔 파일을 무시하고 서버에서 새로 받는다(⌥+클릭).
+  // 기본은 재사용 — 같은 URL을 다시 열 때마다 받으면 사본이 쌓이고 번역본까지 어긋난다.
+  async function run(force = false) {
     if (pending) return; // 중복 제출 방지 (Enter 연타 / 버튼 더블클릭)
     const url = input.value.trim();
     if (!url) { input.focus(); return; }
@@ -68,7 +71,7 @@ function createUrlPanel(paneEl, submit) {
     msg.textContent = '';
     input.disabled = go.disabled = true;
     try {
-      await submit(url);
+      await submit(url, { force });
       input.value = ''; // 성공했을 때만 비운다 — 실패하면 고쳐서 다시 시도할 수 있게 남긴다
     } catch (e) {
       msg.textContent = e?.message || String(e);
@@ -77,9 +80,9 @@ function createUrlPanel(paneEl, submit) {
       input.disabled = go.disabled = false;
     }
   }
-  go.addEventListener('click', run);
+  go.addEventListener('click', (e) => run(e.altKey));
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); run(); }
+    if (e.key === 'Enter') { e.preventDefault(); run(e.altKey); }
     else if (e.key === 'Escape') { e.preventDefault(); input.value = ''; msg.textContent = ''; }
   });
   input.addEventListener('input', () => { msg.textContent = ''; }); // 고쳐 쓰는 중에 옛 오류가 남지 않게
@@ -128,7 +131,7 @@ export function createDualView(hostEl) {
     viewers[side] = createPdfViewer(viewerHost);
     marks[side] = createMarkerLayer(viewers[side], markerStore);
     busy[side] = createBusy(pane); // 뷰어 뒤에 붙여 위에 겹치게
-    if (URL_SIDES.includes(side)) urlPanels[side] = createUrlPanel(pane, (url) => openUrl(side, url));
+    if (URL_SIDES.includes(side)) urlPanels[side] = createUrlPanel(pane, (url, opts) => openUrl(side, url, opts));
   }
 
   let syncEnabled = true;
@@ -312,11 +315,11 @@ export function createDualView(hostEl) {
 
   // 등록된 핸들러(app.js)가 다운로드(main IPC)와 열기를 맡는다. 진행 중에는 번역과 같은
   // busy 오버레이로 pane을 덮어 상태를 알리고, 오류는 그대로 던져 URL 패널이 표시하게 둔다.
-  async function openUrl(side, url) {
+  async function openUrl(side, url, opts) {
     if (!urlCbs.length) throw new Error('URL 열기 준비가 되지 않았습니다');
     busy[side]({ title: 'PDF 다운로드 중…', sub: url, hint: '받는 즉시 이 화면에 표시됩니다' });
     try {
-      for (const cb of urlCbs) await cb(side, url);
+      for (const cb of urlCbs) await cb(side, url, opts);
     } finally {
       busy[side](null);
     }

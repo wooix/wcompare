@@ -8,6 +8,11 @@ const fs = require('node:fs');
 const { makePdf } = require('../helpers/makePdf.js');
 
 const MAIN = path.join(__dirname, '..', '..', 'src', 'main', 'main.js');
+
+// e2e 공통: 렌더러가 localStorage에 남기는 UI 상태(보기 형태 wc-layout, Night, Dict)가
+// spec 사이로 새지 않도록 userData를 이 파일 전용 임시 폴더로 격리한다. 공유 프로필을 쓰면
+// 요약 패널이 열린 채로 시작해 pane 폭이 달라지고, 배율·스크롤을 재는 테스트가 실행 순서에 따라 흔들린다.
+const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ud-'));
 const L = '.pdf-pane[data-side=left]';
 const R = '.pdf-pane[data-side=right]';
 
@@ -35,7 +40,7 @@ const mark = (win, kind) => win.evaluate((k) => window.dispatchEvent(new Keyboar
 
 test('드래그 선택 후 형광펜/밑줄 마커가 생긴다', async () => {
   const { a, b } = writePair('add' + Date.now());
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${L} .textLayer span`, { timeout: 20000 });
 
@@ -59,7 +64,7 @@ test('여러 줄 선택: 줄당 사각형 하나로 합쳐 겹치지 않는다',
   // 형광펜이 진해지고 밑줄이 굵어진다. 저장 전에 줄당 하나로 합쳐야 한다.
   const a = path.join(os.tmpdir(), `wc-mk-ml-${Date.now()}.pdf`);
   fs.writeFileSync(a, makePdf(1, { height: 900, lines: 6 })); // 여러 줄 본문
-  const app = await electron.launch({ args: [MAIN, a] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${L} .textLayer span`, { timeout: 20000 });
 
@@ -91,7 +96,7 @@ test('여러 줄 선택: 줄당 사각형 하나로 합쳐 겹치지 않는다',
 
 test('마커는 페이지 안의 상대 위치로 저장된다 (줌해도 비율 유지)', async () => {
   const { a, b } = writePair('geo' + Date.now());
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${L} .textLayer span`, { timeout: 20000 });
 
@@ -127,7 +132,7 @@ test('마커는 페이지 안의 상대 위치로 저장된다 (줌해도 비율
 
 test('Switch 하면 마커가 문서를 따라 반대편으로 간다', async () => {
   const { a, b } = writePair('sw' + Date.now());
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${R} .textLayer span`, { timeout: 20000 });
 
@@ -147,7 +152,7 @@ test('Switch 하면 마커가 문서를 따라 반대편으로 간다', async ()
 
 test('마커는 텍스트 선택과 링크 클릭을 가로막지 않는다', async () => {
   const { a, b } = writePair('pe' + Date.now());
-  const app = await electron.launch({ args: [MAIN, a, b] });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${L} .textLayer span`, { timeout: 20000 });
 

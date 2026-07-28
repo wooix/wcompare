@@ -7,6 +7,11 @@ const fs = require('node:fs');
 const { makePdf } = require('../helpers/makePdf.js');
 
 const MAIN = path.join(__dirname, '..', '..', 'src', 'main', 'main.js');
+
+// e2e 공통: 렌더러가 localStorage에 남기는 UI 상태(보기 형태 wc-layout, Night, Dict)가
+// spec 사이로 새지 않도록 userData를 이 파일 전용 임시 폴더로 격리한다. 공유 프로필을 쓰면
+// 요약 패널이 열린 채로 시작해 pane 폭이 달라지고, 배율·스크롤을 재는 테스트가 실행 순서에 따라 흔들린다.
+const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ud-'));
 const leftC = '.pdf-pane[data-side=left] .pdf-container';
 const rightC = '.pdf-pane[data-side=right] .pdf-container';
 
@@ -41,7 +46,7 @@ function setup(tag, delay = 0) {
 
 test('PDF 한 개만 열면 번역 버튼이 활성화된다', async () => {
   const { dir, src, env } = setup('one');
-  const app = await electron.launch({ args: [MAIN, src], env });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, src], env });
   const win = await app.firstWindow();
   await win.waitForSelector(`${leftC} canvas`, { timeout: 20000 });
   await expect(win.locator('#btn-translate')).toBeEnabled();
@@ -53,7 +58,7 @@ test('PDF 두 개를 열면 번역 버튼이 비활성화된다', async () => {
   const { dir, src, env } = setup('two');
   const b = path.join(dir, 'other.pdf');
   fs.writeFileSync(b, makePdf(5, { height: 900 }));
-  const app = await electron.launch({ args: [MAIN, src, b], env });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, src, b], env });
   const win = await app.firstWindow();
   await win.waitForSelector(`${rightC} canvas`, { timeout: 20000 });
   await expect(win.locator('#btn-translate')).toBeDisabled();
@@ -63,7 +68,7 @@ test('PDF 두 개를 열면 번역 버튼이 비활성화된다', async () => {
 
 test('번역 중이라는 표시가 비어 있는 쪽 창에 뜬다', async () => {
   const { dir, src, env } = setup('busy', 2); // 페이지 사이 2초 지연 → 진행 중 상태를 관찰
-  const app = await electron.launch({ args: [MAIN, src], env });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, src], env });
   const win = await app.firstWindow();
   await win.waitForSelector(`${leftC} canvas`, { timeout: 20000 });
 
@@ -89,7 +94,7 @@ test('번역 중이라는 표시가 비어 있는 쪽 창에 뜬다', async () =
 
 test('번역하면 결과가 반대편 pane에 열린다', async () => {
   const { dir, src, env } = setup('run');
-  const app = await electron.launch({ args: [MAIN, src], env });
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, src], env });
   const win = await app.firstWindow();
   await win.waitForSelector(`${leftC} canvas`, { timeout: 20000 });
 

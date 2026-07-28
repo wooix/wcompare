@@ -114,8 +114,9 @@ function registerIpc() {
     const next = {};
     if (typeof patch.archivePdfOnOpen === 'boolean') next.archivePdfOnOpen = patch.archivePdfOnOpen;
     if (typeof patch.keepTranslationsInStorage === 'boolean') next.keepTranslationsInStorage = patch.keepTranslationsInStorage;
-    // shortcuts/translate는 object면 그대로 넘기고 settingsStore가 하위 키·타입을 재검증한다.
+    // shortcuts/translate/ui는 object면 그대로 넘기고 settingsStore가 하위 키·타입을 재검증한다.
     if (patch.shortcuts && typeof patch.shortcuts === 'object') next.shortcuts = patch.shortcuts;
+    if (patch.ui && typeof patch.ui === 'object' && !Array.isArray(patch.ui)) next.ui = patch.ui;
     if (patch.translate && typeof patch.translate === 'object' && !Array.isArray(patch.translate)) {
       next.translate = patch.translate;
     }
@@ -201,9 +202,12 @@ function registerIpc() {
   // 무엇보다 "경로를 만들어 내는 주체는 main 하나"라는 allowlist 원칙을 지켜야 한다.
   // 받은 파일은 보관 폴더 downloads/에 두고 allowPath로 등록한다 → 이후 열기·번역·마커 저장이
   // 로컬 PDF와 완전히 같은 경로를 지난다. net.fetch를 쓰는 이유는 앱 세션의 프록시·인증서 설정을 따르기 위함.
-  ipcMain.handle('pdf:open-url', async (_e, rawUrl) => {
+  // force=true면 이미 받아 둔 파일을 무시하고 서버에서 새로 받는다. 이 탈출구가 없으면
+  // 버전 없는 arXiv URL처럼 "같은 주소가 갱신되는" 문서를 처음 받은 바이트에 영원히 고정하게 된다.
+  ipcMain.handle('pdf:open-url', async (_e, rawUrl, { force } = {}) => {
     const res = await downloadPdf(rawUrl, {
       dir: settings.dirFor('downloads'),
+      force: force === true,
       fetch: (u, opts) => net.fetch(u, opts),
     });
     const p = allowPath(res.path);

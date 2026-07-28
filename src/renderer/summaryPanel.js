@@ -114,6 +114,7 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
   let flowToken = 0;
   const filled = { overview: false, sections: false, flow: false };
   let pending = false; // 생성/재생성 중복 실행 방지 (버튼 연타)
+  let runToken = 0;    // 생성 실행의 세대. reset이 올 때마다 올려 낡은 실행의 뒷정리를 무시한다.
 
   const hasContent = () => TABS.some((t) => filled[t.kind]);
 
@@ -218,22 +219,34 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
     setError('');
     setBusy(null);
     setTab('overview');
+    // 진행 중이던 생성의 잠금을 여기서 반드시 푼다. reset은 "이 패널이 이제 다른 문서의 것"이라는
+    // 뜻이라 앞 문서의 생성은 더 이상 이 패널의 일이 아니다. 그리고 그 생성이 **끝나지 않을 수도**
+    // 있다 — 문서를 닫으면 pdf.js가 loadingTask.destroy()를 부르고, 그때 진행 중이던
+    // getPageTexts/getOutline promise는 영영 settle되지 않아 run()의 finally가 돌지 않는다.
+    // 그 경우 pending이 참으로 굳어 버튼이 영구히 잠긴다(실제로 재현된 버그).
+    runToken++; // 늦게 끝난 옛 실행이 방금 푼 잠금을 다시 걸지 않게 한다
+    pending = false;
+    go.disabled = regen.disabled = false;
     syncEmpty();
   }
 
   // 생성/재생성 공통. 콜백이 던진 오류는 패널이 직접 보여준다 — 호출측이 try/catch를 반복하지 않게.
+  // 실행 도중 reset이 오면(문서 교체) 이 실행은 낡은 것이 되므로, 끝나더라도 화면을 건드리지 않는다.
   async function run(fn) {
     if (!fn || pending) return;
+    const token = ++runToken;
     pending = true;
     go.disabled = regen.disabled = true;
     setError('');
     try {
       await fn();
     } catch (e) {
-      setError(e?.message || String(e));
+      if (token === runToken) setError(e?.message || String(e));
     } finally {
-      pending = false;
-      go.disabled = regen.disabled = false;
+      if (token === runToken) {
+        pending = false;
+        go.disabled = regen.disabled = false;
+      }
     }
   }
   go.addEventListener('click', () => run(onGenerate));

@@ -5,6 +5,11 @@ const os = require('node:os');
 const fs = require('node:fs');
 const { execSync } = require('node:child_process');
 
+// e2e 공통: 렌더러가 localStorage에 남기는 UI 상태(보기 형태 wc-layout, Night, Dict)가
+// spec 사이로 새지 않도록 userData를 이 파일 전용 임시 폴더로 격리한다.
+const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ud-'));
+
+
 const hasRuff = (() => { try { execSync('which ruff'); return true; } catch { return false; } })();
 
 test.describe('compare', () => {
@@ -16,7 +21,7 @@ test.describe('compare', () => {
     fs.writeFileSync(a, 'import os\nx = 1\n');
     fs.writeFileSync(b, 'import sys\ny = 2\n');
 
-    const app = await electron.launch({ args: [path.join(__dirname, '..', '..', 'src', 'main', 'main.js'), a, b] });
+    const app = await electron.launch({ args: [path.join(__dirname, '..', '..', 'src', 'main', 'main.js'), `--user-data-dir=${USER_DATA}`, a, b] });
     const win = await app.firstWindow();
     await win.waitForSelector('.monaco-diff-editor', { timeout: 15000 });
 
@@ -36,7 +41,7 @@ test.describe('compare', () => {
     const a = path.join(os.tmpdir(), 'wc-e2e-savea-' + Date.now() + '.py');
     fs.writeFileSync(a, 'x = 1\n');
 
-    const app = await electron.launch({ args: [path.join(__dirname, '..', '..', 'src', 'main', 'main.js'), a, b] });
+    const app = await electron.launch({ args: [path.join(__dirname, '..', '..', 'src', 'main', 'main.js'), `--user-data-dir=${USER_DATA}`, a, b] });
     const win = await app.firstWindow();
     await win.waitForSelector('.monaco-diff-editor', { timeout: 15000 });
 
