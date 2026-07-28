@@ -13,6 +13,7 @@ const MAIN = path.join(__dirname, '..', '..', 'src', 'main', 'main.js');
 // spec 사이로 새지 않도록 userData를 이 파일 전용 임시 폴더로 격리한다. 공유 프로필을 쓰면
 // 요약 패널이 열린 채로 시작해 pane 폭이 달라지고, 배율·스크롤을 재는 테스트가 실행 순서에 따라 흔들린다.
 const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ud-'));
+const leftC = '.pdf-pane[data-side=left] .pdf-container';
 const rightC = '.pdf-pane[data-side=right] .pdf-container';
 
 function writePair(tag) {
@@ -105,6 +106,39 @@ test('Switch: Fit ON 상태에서는 교체 후에도 Fit이 유지된다', asyn
   await win.click('#btn-switch');
   await win.waitForSelector(`${rightC} canvas`, { timeout: 20000 });
   await expect(win.locator('#btn-fit')).toHaveText('Fit: ON'); // 교체 후에도 fit 유지
+
+  await app.close();
+  fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
+});
+
+test('Switch: 확대 상태에서 교체해도 가로 위치가 왼쪽에 붙지 않고 보던 자리를 유지한다', async () => {
+  // 배율만 문서를 따라가고 가로 위치는 안 따라가면, 확대해서 가운데를 보다가 교체하는 순간
+  // 새 pane의 scrollLeft가 0이라 페이지 왼쪽 끝에 붙어 나타난다(사용자 신고).
+  const { a, b } = writePair('hpos' + Date.now());
+  const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a, b] });
+  const win = await app.firstWindow();
+  await win.waitForSelector(`${rightC} canvas`, { timeout: 20000 });
+
+  for (let i = 0; i < 5; i++) await win.click('#btn-zoom-in'); // 가로가 넘치도록 확대
+  // 왼쪽을 가로 가운데쯤으로 옮긴다(끝이 아니라 중간이어야 "따라왔는지"를 잴 수 있다)
+  const mid = await win.evaluate((s) => {
+    const el = document.querySelector(s);
+    el.scrollLeft = Math.round((el.scrollWidth - el.clientWidth) / 2);
+    return el.scrollLeft;
+  }, leftC);
+  expect(mid).toBeGreaterThan(20); // 확대가 실제로 가로 넘침을 만들었다
+  await win.waitForTimeout(300);
+
+  await win.click('#btn-switch');
+  await win.waitForTimeout(500);
+
+  // 교체 뒤에도 가로 위치가 0(왼쪽 끝)으로 떨어지지 않았다
+  const after = await win.evaluate((sels) => ({
+    l: document.querySelector(sels[0]).scrollLeft,
+    r: document.querySelector(sels[1]).scrollLeft,
+  }), [leftC, rightC]);
+  expect(after.l).toBeGreaterThan(mid * 0.5);
+  expect(after.r).toBeGreaterThan(mid * 0.5);
 
   await app.close();
   fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });

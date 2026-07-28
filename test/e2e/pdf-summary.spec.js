@@ -253,38 +253,37 @@ test('회귀: 요약 생성 중에 문서를 닫으면 잠금이 곧바로 풀�
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('회귀: Switch로 문서가 좌우를 옮겨 다녀도 요약은 대상 문서를 정확히 따라간다', async () => {
-  // 요약 패널을 side에 묶으면 어긋난다: A를 요약한 뒤 ⇄ Switch를 누르면 A는 오른쪽으로 가는데
-  // closeFile의 판정이 side 비교라 'right !== left'로 "요약 side가 아니다"라고 오판했다.
-  // 그 결과 A를 닫아도 A의 요약이 남고, 남은 문서용 '논문 요약 생성' 버튼이 사라졌다.
+test('요약은 side가 아니라 문서를 따라간다 — Switch해도 읽던 요약이 사라지지 않는다', async () => {
+  // 요약을 "왼쪽 pane"에 묶으면 Switch 한 번에 요약 대상이 바뀌어 읽던 내용이 지워진다.
+  // 이 앱은 마커를 이미 side가 아닌 문서 경로에 묶어 두었고, 요약도 같은 규칙을 따른다.
   const { dir, a, b, storageDir, agy } = setup('switch');
   const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a, b], storageDir);
   await win.waitForSelector(`${R} canvas`, { timeout: 20000 });
 
   await win.click('#btn-layout-full');
   await win.click(`${S} .sum-empty-go`); // 왼쪽(a)의 요약을 만든다
-  await expect(win.locator(`${S} .sum-pane[data-kind=overview]`))
-    .toContainText('한 줄짜리 개요 본문', { timeout: 25000 });
+  const ov = `${S} .sum-pane[data-kind=overview]`;
+  await expect(win.locator(ov)).toContainText('한 줄짜리 개요 본문', { timeout: 25000 });
   await expect(win.locator(`${S} .sum-regen`)).toBeEnabled({ timeout: 25000 });
 
-  // Switch — 요약 대상(왼쪽)이 a에서 b로 바뀐다 → 패널은 b의 것으로 갈아 끼워져야 한다
+  // Switch: a가 오른쪽으로 간다. 문서는 여전히 열려 있으므로 요약은 그대로 남아야 한다.
   await win.click('#btn-switch');
-  await expect(win.locator(`${S} .sum-empty-go`)).toBeVisible({ timeout: 10000 });
-  await expect(win.locator(`${S} .sum-pane[data-kind=overview]`)).toBeEmpty();
+  await win.waitForTimeout(500);
+  await expect(win.locator(ov)).toContainText('한 줄짜리 개요 본문');
+  await expect(win.locator(`${S} .sum-empty`)).toBeHidden();
 
-  // 다시 Switch로 a를 왼쪽에 돌려놓으면 캐시에서 a의 요약이 복원된다 — 요약이 문서를 따라다닌다
+  // 한 번 더 Switch해도 마찬가지 (왕복해도 안정적이다)
   await win.click('#btn-switch');
-  await expect(win.locator(`${S} .sum-pane[data-kind=overview]`))
-    .toContainText('한 줄짜리 개요 본문', { timeout: 15000 });
+  await win.waitForTimeout(500);
+  await expect(win.locator(ov)).toContainText('한 줄짜리 개요 본문');
 
-  // 한 번 더 Switch해서 a를 오른쪽에 둔 뒤 a를 닫는다 — 이것이 원래 깨지던 경로다.
-  // 닫힌 a의 요약이 남으면 안 되고, 남은 b를 위한 '논문 요약 생성' 버튼이 살아 있어야 한다.
+  // 주인 문서(a)가 닫히면 그때 비로소 남은 문서로 갈아 끼운다 — a를 오른쪽에 두고 닫는다.
   await win.click('#btn-switch');
   await win.click(`${R} .pdf-close`);
   await expect(win.locator(R)).not.toHaveClass(/loaded/);
   await expect(win.locator(`${S} .sum-empty-go`)).toBeVisible();
   await expect(win.locator(`${S} .sum-empty-go`)).toBeEnabled();
-  await expect(win.locator(`${S} .sum-pane[data-kind=overview]`)).toBeEmpty();
+  await expect(win.locator(ov)).toBeEmpty();
 
   await app.close();
   fs.rmSync(dir, { recursive: true, force: true });
@@ -398,5 +397,64 @@ test('요약 뷰어 글씨 크기: A+ / A− / ↺ 가 본문과 제목을 함�
     .toBe(kept);
   await again.app.close();
 
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('회귀: 라이트 테마에서 흐름도의 글씨가 배경에 묻히지 않는다', async () => {
+  // mermaid는 색을 CSS가 아니라 렌더 시점에 SVG 안에 구워 넣는다. 테마를 안 따라가면
+  // 라이트 UI 위에 다크 그림이 얹혀 상자는 투명하고 글씨는 밝은 회색이 되어 안 보인다(사용자 신고).
+  const { dir, a, storageDir, agy } = setup('flowtheme');
+  const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a], storageDir);
+
+  await win.click('#btn-layout-summary');
+  await win.click(`${S} .sum-empty-go`);
+  await win.click(`${S} .sum-tab[data-kind=flow]`);
+  await expect(win.locator(`${S} .sum-pane[data-kind=flow] svg`)).toHaveCount(1, { timeout: 25000 });
+
+  // 라이트로 바꾼다
+  await win.evaluate(() => document.getElementById('settings-dialog').showModal());
+  await win.selectOption('#set-theme', 'light');
+  await win.evaluate(() => document.getElementById('settings-dialog').close());
+
+  // 다시 그려질 때까지 기다린 뒤 실제 대비비를 잰다
+  const contrast = async () => win.evaluate(() => {
+    const lum = (c) => {
+      const m = (c || '').match(/[\d.]+/g);
+      if (!m || m.length < 3) return null;
+      const [r, g, b] = m.slice(0, 3).map((n) => {
+        const s = Number(n) / 255;
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const pane = document.querySelector('.sum-pane[data-kind=flow]');
+    const label = pane?.querySelector('.nodeLabel');
+    if (!label) return null;
+    // .sum-body는 배경이 투명이라 그대로 재면 검정으로 잡힌다 → 실제로 색을 칠하는
+    // 가장 가까운 조상을 찾아 올라간다(알파가 0이 아닌 첫 배경).
+    const effectiveBg = (el) => {
+      for (let n = el; n; n = n.parentElement) {
+        const c = getComputedStyle(n).backgroundColor;
+        const m = (c || '').match(/[\d.]+/g);
+        if (m && (m.length < 4 || Number(m[3]) > 0)) return c;
+      }
+      return getComputedStyle(document.body).backgroundColor;
+    };
+    // 글자색은 mermaid가 SVG 안에 구워 넣고, 배경은 패널 CSS가 정한다 — 둘을 맞대어 본다.
+    const fg = lum(getComputedStyle(label).color);
+    const bg = lum(effectiveBg(label));
+    if (fg === null || bg === null) return null;
+    return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
+  });
+
+  await expect.poll(contrast, { timeout: 15000 }).toBeGreaterThan(4.5); // WCAG AA
+
+  // 다크로 되돌려도 마찬가지로 읽혀야 한다
+  await win.evaluate(() => document.getElementById('settings-dialog').showModal());
+  await win.selectOption('#set-theme', 'dark');
+  await win.evaluate(() => document.getElementById('settings-dialog').close());
+  await expect.poll(contrast, { timeout: 15000 }).toBeGreaterThan(4.5);
+
+  await app.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });

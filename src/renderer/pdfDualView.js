@@ -351,31 +351,34 @@ export function createDualView(hostEl) {
     for (const s of targets) next[s] = Math.max(0.25, Math.min(5, viewers[s].getScale() * factor));
     if (targets.every((s) => next[s] === viewers[s].getScale())) return; // 전부 경계라 변화 없음
 
-    // 가로 중앙 기준 확대/축소.
-    // 그냥 두면 왼쪽이 고정된 채 커진다: 페이지가 컨테이너보다 넓어지는 순간 .pdfViewer .page의
-    // margin:auto가 0으로 접혀 페이지가 왼쪽에 붙고, pdf.js도 스크롤을 페이지 왼쪽 기준으로 복원한다.
-    // 그래서 컨테이너 콘텐츠 좌표가 아니라 "페이지 안에서의 위치(0~1)"를 기준으로 삼는다
-    // — 페이지가 좁을 땐 가운데 정렬돼 원점이 움직이므로, 콘텐츠 좌표로는 계산이 어긋난다.
+    // 가로 중앙 기준 확대/축소 (readAnchor/applyAnchor 주석 참고).
     const anchor = {};
-    for (const s of targets) {
-      const el = viewers[s].el;
-      const page = viewers[s].pageDiv();
-      if (!page?.offsetWidth) continue;
-      anchor[s] = (el.scrollLeft + el.clientWidth / 2 - page.offsetLeft) / page.offsetWidth;
-    }
+    for (const s of targets) anchor[s] = readAnchor(s);
 
     for (const s of targets) viewers[s].setScale(next[s]);
 
-    for (const s of targets) {
-      if (anchor[s] === undefined) continue;
-      const el = viewers[s].el;
-      const page = viewers[s].pageDiv();
-      if (!page?.offsetWidth) continue;
-      // 범위를 벗어난 값은 브라우저가 [0, 최대] 로 알아서 클램프한다.
-      el.scrollLeft = page.offsetLeft + anchor[s] * page.offsetWidth - el.clientWidth / 2;
-    }
+    for (const s of targets) applyAnchor(s, anchor[s]);
     realign();
     emit();
+  }
+
+  // ===== 가로 위치 기억/복원 =====
+  // 배율이나 문서가 바뀌면 컨테이너 스크롤 좌표는 의미를 잃는다: 페이지가 컨테이너보다 넓어지는
+  // 순간 .pdfViewer .page의 margin:auto가 0으로 접혀 페이지가 왼쪽에 붙고, 좁을 땐 가운데 정렬돼
+  // 원점이 움직인다. 그래서 "페이지 안에서의 위치(0~1)"로 기억한다 — 줌과 좌우 교체가 함께 쓴다.
+  function readAnchor(side) {
+    const el = viewers[side].el;
+    const page = viewers[side].pageDiv();
+    if (!page?.offsetWidth) return null;
+    return (el.scrollLeft + el.clientWidth / 2 - page.offsetLeft) / page.offsetWidth;
+  }
+  function applyAnchor(side, a) {
+    if (a === null || a === undefined) return;
+    const el = viewers[side].el;
+    const page = viewers[side].pageDiv();
+    if (!page?.offsetWidth) return;
+    // 범위를 벗어난 값은 브라우저가 [0, 최대] 로 알아서 클램프한다.
+    el.scrollLeft = page.offsetLeft + a * page.offsetWidth - el.clientWidth / 2;
   }
 
   function gotoPage(n) {
@@ -411,6 +414,9 @@ export function createDualView(hostEl) {
     // 문서가 좌우로 맞바뀌므로 배율도 그 문서를 따라간다 — Sync OFF로 두 배율이 서로
     // 달랐어도 여기서 하나로 합치지 않는다.
     const scales = fitWidth ? null : { left: viewers.left.getScale(), right: viewers.right.getScale() };
+    // 가로 위치도 배율처럼 문서를 따라가야 한다. 안 그러면 확대해서 가운데를 보고 있다가
+    // 교체하는 순간 새 pane의 scrollLeft가 0이라 페이지 왼쪽 끝에 붙어 나타난다.
+    const anchors = { left: readAnchor('left'), right: readAnchor('right') };
     if (!docs.left && !docs.right) return;
 
     const keys = { left: marks.left.getDoc(), right: marks.right.getDoc() };
@@ -434,6 +440,8 @@ export function createDualView(hostEl) {
     for (const side of loadedSides()) {
       const p = pages[other(side)];
       if (p > 1) viewers[side].scrollToPage(Math.min(viewers[side].pageCount() || 1, p));
+      // 세로 위치를 잡은 뒤에 가로를 복원한다 — 순서가 바뀌면 scrollToPage가 가로를 되돌린다.
+      applyAnchor(side, anchors[other(side)]);
     }
     hist.back.length = 0; // 문서가 바뀌었으므로 링크 히스토리는 무효
     hist.fwd.length = 0;

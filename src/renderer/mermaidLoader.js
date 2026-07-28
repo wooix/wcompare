@@ -10,6 +10,33 @@
 let pending = null; // 로드 Promise를 모듈에 붙들어 둔다 → 두 번째 호출부터 재사용(script 중복 주입 방지)
 let seq = 0; // render id 충돌 방지용 일련번호
 
+// mermaid는 색을 CSS가 아니라 **렌더 시점에 SVG 안에 구워 넣는다**. 그래서 앱 테마를 따라가려면
+// (1) 그리기 전에 mermaid 테마를 맞추고 (2) 테마가 바뀌면 이미 그린 그림을 다시 그려야 한다.
+// wanted는 로드 전에도 세울 수 있다 — 앱은 시작하자마자 테마를 정하는데 mermaid는
+// 흐름도 탭을 처음 열 때야 로드되기 때문이다.
+let wanted = 'dark';
+let applied = null;
+
+// 'default'가 mermaid의 밝은 테마다. 다크 UI에 밝은 그림(또는 그 반대)이 얹히면
+// 상자는 투명하고 글자는 배경에 묻힌다 — 실제로 라이트 테마에서 흐름도가 안 보였다.
+const mermaidThemeFor = (name) => (name === 'light' ? 'default' : 'dark');
+
+export function setMermaidTheme(name) {
+  wanted = name === 'light' ? 'light' : 'dark';
+}
+
+function applyTheme(mermaid) {
+  mermaid.initialize({
+    startOnLoad: false, // 우리가 원하는 시점에만 그린다(숨겨진 탭에서 자동 렌더되면 폭이 0으로 잡힌다)
+    // securityLevel은 반드시 'strict' — 'sandbox'는 결과를 iframe에 담는데
+    // 이 앱 CSP에는 frame-src가 없어 그 iframe이 통째로 막힌다.
+    // 'strict'는 DOMPurify로 출력을 정화하므로 LLM이 만든 코드에도 안전하다.
+    securityLevel: 'strict',
+    theme: mermaidThemeFor(wanted),
+  });
+  applied = wanted;
+}
+
 function inject() {
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
@@ -30,14 +57,7 @@ function inject() {
 export function loadMermaid() {
   if (!pending) {
     pending = inject().then((mermaid) => {
-      mermaid.initialize({
-        startOnLoad: false, // 우리가 원하는 시점에만 그린다(숨겨진 탭에서 자동 렌더되면 폭이 0으로 잡힌다)
-        // securityLevel은 반드시 'strict' — 'sandbox'는 결과를 iframe에 담는데
-        // 이 앱 CSP에는 frame-src가 없어 그 iframe이 통째로 막힌다.
-        // 'strict'는 DOMPurify로 출력을 정화하므로 LLM이 만든 코드에도 안전하다.
-        securityLevel: 'strict',
-        theme: 'dark',
-      });
+      applyTheme(mermaid);
       return mermaid;
     });
   }
@@ -47,6 +67,8 @@ export function loadMermaid() {
 // 파싱 오류는 그대로 던진다 — 호출측이 사용자에게 원본 코드와 함께 보여준다.
 export async function renderMermaid(code, id) {
   const mermaid = await loadMermaid();
+  // 로드 이후에 테마가 바뀌었을 수 있다(설정창에서 다크↔라이트). 그리기 직전에 맞춘다.
+  if (applied !== wanted) applyTheme(mermaid);
   const rid = id || `mmd-${++seq}`;
   try {
     const { svg } = await mermaid.render(rid, code);

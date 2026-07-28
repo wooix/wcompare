@@ -4,7 +4,7 @@
 // 요약을 "만드는" 일은 콜백(onGenerate/onRegenerate)에 통째로 위임하고, 이 모듈은 표시와
 // 오류 안내만 맡는다 — 덕분에 LLM 호출 경로가 바뀌어도 여기는 손댈 필요가 없다.
 import { renderMarkdown } from './markdownView.js';
-import { renderMermaid } from './mermaidLoader.js';
+import { renderMermaid, setMermaidTheme } from './mermaidLoader.js';
 
 const TABS = [
   { kind: 'overview', label: 'Overview' },
@@ -318,12 +318,22 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
   setTab('overview');
   syncEmpty();
 
+  // 앱 테마가 바뀌면 흐름도를 다시 그린다. mermaid는 색을 SVG 안에 구워 넣으므로 CSS만으로는
+  // 이미 그린 그림의 색이 바뀌지 않는다 — 캐시를 비워 새 테마로 다시 그리게 하는 수밖에 없다.
+  // 탭이 숨겨져 폭이 0이면 drawFlow가 알아서 미루고, ResizeObserver가 드러날 때 다시 부른다.
+  function setTheme(name) {
+    setMermaidTheme(name);
+    flowDrawn = '';
+    drawFlow();
+  }
+
   return {
     el,
     setPart,
     setBusy,
     setError,
     setTab,
+    setTheme,
     getTab: () => tab,
     hasContent,
     reset,

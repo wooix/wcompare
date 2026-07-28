@@ -35,6 +35,8 @@ function applyTheme(name) {
   monaco.editor.setTheme(theme === 'light' ? 'vs' : 'vs-dark');
   const sel = $('set-theme');
   if (sel) sel.value = theme; // 설정창이 열려 있으면 선택 상태도 맞춘다
+  // 흐름도는 CSS가 아니라 SVG에 색이 박혀 있어 다시 그려야 테마를 따라온다.
+  summaryPanel?.setTheme(theme);
 }
 function setTheme(name) {
   applyTheme(name);
@@ -163,6 +165,7 @@ function ensureDualView() {
     onGenerate: () => generateSummary(),
     onRegenerate: () => generateSummary(),
   });
+  summaryPanel.setTheme(theme); // 패널은 나중에 만들어지므로 현재 테마를 지금 물려준다
   applyLayout();
   return dualView;
 }
@@ -278,7 +281,16 @@ async function switchSides() {
 // ===== 논문 요약 =====
 // 요약 재료는 "원문" 쪽에서 뽑는다 — 왼쪽이 있으면 왼쪽, 없으면 오른쪽.
 // 번역본을 다시 요약하면 번역에서 한 번 잃은 것 위에 요약 손실이 또 겹치기 때문이다.
-const summarySide = () => (pdfPaths.left ? 'left' : (pdfPaths.right ? 'right' : null));
+// 요약이 이미 어떤 문서에 묶여 있으면 그 문서가 "지금 있는 쪽"을 쓴다 — Switch로 좌우를 옮겨
+// 다녀도 요약은 문서를 따라간다(마커가 side가 아니라 문서 경로에 묶여 있는 것과 같은 규칙).
+// 아직 묶이지 않았으면 원문 쪽(왼쪽 우선)을 고른다.
+const summarySide = () => {
+  if (summaryDoc) {
+    if (pdfPaths.left === summaryDoc) return 'left';
+    if (pdfPaths.right === summaryDoc) return 'right';
+  }
+  return pdfPaths.left ? 'left' : (pdfPaths.right ? 'right' : null);
+};
 
 // 요약 생성의 세대. 문서가 바뀔 때마다(열기·닫기) 올린다.
 // 진행 중이던 생성은 "끝나지 않을 수도" 있다 — 문서를 닫으면 pdf.js가 loadingTask를 destroy하고,
@@ -298,15 +310,19 @@ function resetSummaryPanel() {
   window.wcompare.cancelSummarize().catch(() => {});
 }
 
-// 요약 패널을 지금의 "원문 쪽"(왼쪽 우선) 문서에 다시 묶는다. 열기·닫기·Switch가 모두 이 한 곳을
-//지나게 해서 세 경로가 서로 다른 판정을 하지 않게 한다.
-// 이미 그 문서의 것이면 아무것도 하지 않는다 — 같은 문서를 다시 그리면 진행 중인 생성이 헛되이 끊긴다.
+// 요약 패널을 열려 있는 문서에 다시 묶는다. 열기·닫기·Switch가 모두 이 한 곳을 지나게 해서
+// 세 경로가 서로 다른 판정을 하지 않게 한다.
+//
+// 규칙은 하나다: **주인 문서가 아직 열려 있으면 아무것도 하지 않는다.**
+// Switch는 문서를 닫지 않고 자리만 바꾸므로 이 규칙 덕분에 읽던 요약이 그대로 남는다
+// (side 기준으로 판정하면 Switch 한 번에 요약이 사라진다 — 실제로 그랬다).
+// 주인이 닫혔을 때만 남은 문서로 갈아 끼우고, 아무것도 없으면 비운다.
 async function syncSummaryToDoc() {
   if (!summaryPanel) return;
-  const side = summarySide();
-  const doc = side ? pdfPaths[side] : null;
-  if (doc === summaryDoc) return;
-  if (doc) await restoreSummary(doc); else resetSummaryPanel();
+  const open = [pdfPaths.left, pdfPaths.right].filter(Boolean);
+  if (summaryDoc && open.includes(summaryDoc)) return; // 주인이 살아 있다 → 그대로 둔다
+  const next = pdfPaths.left || pdfPaths.right || null;
+  if (next) await restoreSummary(next); else resetSummaryPanel();
 }
 
 // 프롬프트 재료를 모은다. 목차가 있으면 각 절의 페이지 범위로 본문을 잘라 "절 제목 + 그 절 본문"
