@@ -102,11 +102,25 @@
     --backdrop:      rgba(0, 0, 0, 0.35);
   }
 
+  /* 세로 배치를 flex로 잡는다. 툴바가 몇 줄이 되든 본문이 나머지를 정확히 차지하게 하기 위해서다
+     — 예전에는 아래 영역 높이를 calc(100% - 36px - 22px)로 못 박아 두어, 툴바가 한 줄을 넘기는
+     순간 본문이 화면 밖으로 밀려났다. */
   html, body { margin: 0; height: 100%; background:var(--bg); }
-  /* 컨트롤이 많아 1280px 창에서는 가로가 빠듯하다. 줄바꿈을 막지 않으면 버튼 라벨이 한 글자씩
-     세로로 접혀 읽을 수 없게 되므로, 접히는 대신 툴바가 가로로 스크롤되게 한다. */
-  #toolbar { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: var(--bg); color: var(--fg); font: 13px sans-serif; overflow-x: auto; overflow-y: hidden; }
-  #toolbar::-webkit-scrollbar { height: 0; }
+  body { display: flex; flex-direction: column; }
+  /* 컨트롤이 많아 1280px 기본 창에서는 한 줄에 다 들어가지 않는다. 가로 스크롤로 숨기면
+     오른쪽 버튼들이 있는지조차 모르게 되므로, 두 줄로 접어 전부 보이게 한다.
+     접는 위치는 .tb-break가 정한다(보기 형태 버튼부터 아랫줄). 버튼 라벨 자체는
+     아래 white-space:nowrap이 지켜 주므로 글자가 세로로 접히지는 않는다. */
+  /* box-sizing:border-box — min-height에 padding을 포함시켜, 한 줄만 쓰는 diff 모드에서
+     예전과 같은 36px를 그대로 유지한다(content-box면 padding만큼 더 두꺼워진다). */
+  #toolbar { min-height: 36px; box-sizing: border-box; flex: 0 0 auto; display: flex; flex-wrap: wrap;
+    align-items: center; gap: 8px; row-gap: 6px; padding: 4px 8px;
+    background: var(--bg); color: var(--fg); font: 13px sans-serif; }
+  /* 줄바꿈 지점 — 폭 전체를 차지하는 높이 0짜리 항목이라 뒤따르는 것들이 다음 줄로 넘어간다.
+     #pdf-controls 안에 있으므로 diff 모드에서는 함께 사라진다(그때는 버튼이 적어 한 줄로 충분).
+     선택자에 #toolbar를 붙인 이유: 아래 `#pdf-controls > *`의 `flex:0 0 auto`가 ID를 포함해
+     명시도에서 이기므로, 클래스만으로 쓰면 flex-basis가 auto로 덮여 줄바꿈이 일어나지 않는다. */
+  #toolbar .tb-break { flex: 0 0 100%; height: 0; margin: 0; }
   #toolbar > *, #pdf-controls > *, #diff-controls > * { flex: 0 0 auto; }
   #toolbar button, #toolbar span { white-space: nowrap; }
   #toolbar button { background: var(--bg-btn); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; cursor: pointer; }
@@ -119,7 +133,9 @@
   #diff-controls, #pdf-controls { display:flex; align-items:center; gap:6px; color:var(--fg-dim); }
   #pdf-find-count { min-width:104px; font:11px monospace; color:var(--info); }
   #pdf-find-count.miss { color:var(--danger); }
-  #diff-wrap, #pdfview { height: calc(100% - 36px - 22px); }
+  /* 남는 세로 공간을 전부 차지한다. min-height:0 이 없으면 flex 항목의 기본 최소 크기 때문에
+     내용이 넘칠 때 줄어들지 못해 상태줄을 화면 밖으로 밀어낸다. */
+  #diff-wrap, #pdfview { flex: 1 1 auto; min-height: 0; }
   #diff-wrap { display:flex; }
   #editor { flex:1; min-width:0; height:100%; }
   #pdfview { display:none; }
@@ -359,13 +375,13 @@
   .sum-pane .katex { color:var(--fg); }
   .sum-pane .katex-display { overflow-x:auto; overflow-y:hidden; padding:2px 0; }
   .pdfViewer .page { margin:8px auto; border:1px solid var(--page-border); }
-  #statusbars { height: 22px; display: flex; background: var(--bg); color: var(--info); font: 12px monospace; }
+  #statusbars { height: 22px; flex: 0 0 auto; display: flex; background: var(--bg); color: var(--info); font: 12px monospace; }
   #statusbars > div { flex: 1; padding: 0 8px; overflow: hidden; white-space: nowrap; opacity: 0.5; }
   #statusbars > div.active { opacity: 1; }
   /* 같은 opacity라도 배경이 밝을수록 대비가 더 많이 죽는다 — 0.5로 두면 라이트에서 2.3:1까지 떨어져
      "읽히되 물러나 있는" 비활성 느낌이 아니라 그냥 안 보인다. 라이트에서만 올려 다크(3.8:1)와 짝을 맞춘다. */
   :root[data-theme="light"] #statusbars > div { opacity: 0.75; }
-  #pdf-status { display:none; height:22px; background:var(--bg); color:var(--info); font:12px monospace; align-items:center; padding:0 8px; }
+  #pdf-status { display:none; height:22px; flex:0 0 auto; background:var(--bg); color:var(--info); font:12px monospace; align-items:center; padding:0 8px; }
 
   /* 모달 다이얼로그 (프로젝트 이름 입력 / 설정) */
   dialog { background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px;
@@ -418,6 +434,7 @@
       <button id="btn-find-prev" title="이전 일치 (⇧Enter)">▲</button>
       <button id="btn-find-next" title="다음 일치 (Enter)">▼</button>
       <span id="pdf-find-count"></span>
+      <span class="tb-break"></span>
       <span id="pdf-layout">
         <button id="btn-layout-compare" title="원문 | 번역 대조">대조</button>
         <button id="btn-layout-summary" title="원문 | 논문 요약">요약</button>
@@ -468,6 +485,15 @@
     </div>
     <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-archive-pdf" /> PDF를 열 때 보관 폴더에 사본 저장</label>
     <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-keep-translations" /> 번역본을 보관 폴더에 저장</label>
+
+    <div style="margin-top:12px; border-top:1px solid var(--border-soft); padding-top:10px;">
+      <div style="color:var(--fg-subtle); font-size:11px; margin-bottom:6px;">PDF 기본 앱</div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span id="set-pdf-default-status" style="color:var(--fg-muted);">확인 중…</span>
+        <button id="set-pdf-default">wcompare로 지정</button>
+      </div>
+      <div id="set-pdf-default-hint" style="color:var(--fg-subtle); font-size:11px; margin-top:6px; line-height:1.5; white-space:pre-line; max-width:420px;"></div>
+    </div>
 
     <div style="margin-top:12px; border-top:1px solid var(--border-soft); padding-top:10px;">
       <div style="color:var(--fg-subtle); font-size:11px; margin-bottom:6px;">토글 단축키 (변경을 누르고 원하는 키 조합을 누르세요 · Esc 취소)</div>

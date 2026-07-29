@@ -1,5 +1,5 @@
 // src/main/ipc.js
-const { ipcMain, dialog, BrowserWindow, Menu, clipboard, net, shell } = require('electron');
+const { app, ipcMain, dialog, BrowserWindow, Menu, clipboard, net, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
@@ -18,6 +18,7 @@ const project = require('./project.js');
 const recentFiles = require('./recentFiles.js');
 const settings = require('./settings.js');
 const { createTranslationJobs } = require('./translationJobs.js');
+const { getPdfHandler, setPdfHandler } = require('./defaultApp.js');
 
 // 형광펜 팔레트. 렌더러 pdfMarkers의 기본 노랑과 같은 투명도(0.45) 계열.
 const HIGHLIGHT_COLORS = [
@@ -230,6 +231,18 @@ function registerIpc() {
 
   ipcMain.handle('lint:run', (_e, payload) => lint(payload));
 
+  // PDF 기본 앱 — 조회와 지정. 번들 ID는 렌더러가 아니라 app에서 가져온다(렌더러가 임의 앱을
+  // 기본으로 앉히지 못하게). 지정에 실패해도 사유를 그대로 돌려주어 안내가 갈리도록 한다.
+  ipcMain.handle('system:pdf-default', (_e, { set } = {}) => {
+    const self = app.getBundleId?.() || 'com.wooix.wcompare';
+    if (!set) {
+      const { duti, handler } = getPdfHandler();
+      return { duti, handler, self, isOurs: handler === self };
+    }
+    const res = setPdfHandler(self);
+    return { ...res, self, isOurs: res.handler === self };
+  });
+
   // ===== PDF 마커 자동 영속화 =====
   // 경로는 렌더러가 보낸 값을 normalize(realpath) 후 "이 세션에서 연 PDF"(openedPdfs)에 있을 때만 다룬다.
   // 이 앱의 보안 원칙(allowlist) 그대로 — 임의 경로에 쓰거나 임의 경로를 읽지 못하게 한다.
@@ -424,6 +437,21 @@ function registerIpc() {
   });
 }
 
+// Finder에서 연 파일을 놓을 자리가 없을 때, 렌더러가 새 창을 청하는 통로.
+// 경로는 여기서 다시 검문한다 — 렌더러가 임의 경로로 창을 열 수 있으면 허용목록 원칙이 무너진다.
+// main이 open-file에서 allowPath로 등록한 경로만 통과한다.
+function registerOpenInNewWindow(createWindow) {
+  ipcMain.handle('window:open-files', (_e, rawPaths) => {
+    const paths = (Array.isArray(rawPaths) ? rawPaths : [])
+      .filter((p) => typeof p === 'string' && p)
+      .map((p) => normalize(p))
+      .filter((p) => allowed.has(p));
+    if (!paths.length) return { ok: false };
+    createWindow({ left: paths[0], right: paths[1] || null });
+    return { ok: true };
+  });
+}
+
 // 앱 종료 시 호출 — detached로 띄운 transpaper·요약 CLI(및 그 자식 agy/claude)가 살아남지 않도록.
 // 요약도 여기서 함께 정리한다: 같은 detached 관용구라 빠뜨리면 앱을 꺼도 프로세스가 남는다.
 function cancelTranslation() { jobs.cancelAll(); summaryJobs.cancelAll(); }
@@ -431,4 +459,6 @@ function cancelTranslation() { jobs.cancelAll(); summaryJobs.cancelAll(); }
 // 특정 창이 파괴될 때 그 창의 작업만 취소한다(main.js의 webContents 'destroyed' 훅에서 호출).
 function cancelForWebContents(wcId) { jobs.cancel(wcId); summaryJobs.cancel(wcId); }
 
-module.exports = { registerIpc, allowPath, cancelTranslation, cancelForWebContents };
+module.exports = {
+  registerIpc, allowPath, cancelTranslation, cancelForWebContents, registerOpenInNewWindow,
+};

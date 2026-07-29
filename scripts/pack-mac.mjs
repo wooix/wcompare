@@ -55,6 +55,27 @@ set('CFBundleIdentifier', BUNDLE_ID);
 set('CFBundleShortVersionString', pkg.version);
 set('CFBundleVersion', pkg.version);
 
+// PDF를 이 앱으로 열 수 있다고 선언한다. 이 선언이 없으면 Finder의 "다음으로 열기" 목록에
+// wcompare가 아예 나타나지 않아, 사용자가 기본 앱으로 고르는 것 자체가 불가능하다.
+//  - CFBundleTypeRole=Viewer: 읽기 전용으로 다룬다(원본을 고쳐 쓰지 않는다는 사실 그대로).
+//  - LSHandlerRank=Default: "기본 앱이 될 만하다"는 선언일 뿐 강제하지 않는다. Preview를
+//    밀어내지 않으며, 최종 선택은 언제나 사용자 몫이다.
+//  - UTI와 확장자를 함께 적는다: 서명 없는 PDF 등 UTI 판정이 흔들리는 경우의 보험.
+// Set은 없는 키에 실패하므로 Add를 쓴다. 재빌드에서 중복되지 않게 먼저 지운다.
+const plb = (cmd) => execFileSync('/usr/libexec/PlistBuddy', ['-c', cmd, plist]);
+try { plb('Delete :CFBundleDocumentTypes'); } catch { /* 첫 빌드에는 없다 */ }
+for (const cmd of [
+  'Add :CFBundleDocumentTypes array',
+  'Add :CFBundleDocumentTypes:0 dict',
+  'Add :CFBundleDocumentTypes:0:CFBundleTypeName string PDF Document',
+  'Add :CFBundleDocumentTypes:0:CFBundleTypeRole string Viewer',
+  'Add :CFBundleDocumentTypes:0:LSHandlerRank string Default',
+  'Add :CFBundleDocumentTypes:0:LSItemContentTypes array',
+  'Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string com.adobe.pdf',
+  'Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions array',
+  'Add :CFBundleDocumentTypes:0:CFBundleTypeExtensions:0 string pdf',
+]) plb(cmd);
+
 // 5) ad-hoc 재서명 (arm64는 유효 서명 없으면 실행 차단; 번들 수정으로 기존 서명이 깨졌음)
 execFileSync('codesign', ['--force', '--deep', '--sign', '-', APP], { stdio: 'inherit' });
 

@@ -196,8 +196,10 @@ function setMode(m) {
   // #diff-wrap 전체를 토글해야 좌/우 md TOC 드로어도 에디터와 함께 사라진다.
   $('diff-wrap').style.display = m === 'diff' ? 'flex' : 'none';
   $('pdfview').style.display = m === 'pdf' ? 'flex' : 'none';
-  $('diff-controls').style.display = m === 'diff' ? 'flex' : 'none';
-  $('pdf-controls').style.display = m === 'pdf' ? 'flex' : 'none';
+  // 'contents' — 이 묶음 자체는 상자를 만들지 않고 안의 버튼들이 툴바의 flex 항목이 된다.
+  // 그래야 툴바가 버튼 단위로 두 줄로 접힌다('flex'면 묶음이 통째로 한 항목이라 접히지 않는다).
+  $('diff-controls').style.display = m === 'diff' ? 'contents' : 'none';
+  $('pdf-controls').style.display = m === 'pdf' ? 'contents' : 'none';
   $('statusbars').style.display = m === 'diff' ? 'flex' : 'none';
   $('pdf-status').style.display = m === 'pdf' ? 'flex' : 'none';
   $('btn-mode').textContent = m === 'diff' ? 'PDF Mode' : 'Diff Mode';
@@ -772,6 +774,7 @@ $('set-storage-change').onclick = async () => {
   if (s) $('set-storage-path').value = s.storageDir;
 };
 $('settings-close').onclick = () => { endShortcutCapture(); $('settings-dialog').close(); };
+$('set-pdf-default').onclick = () => setPdfDefault();
 // 테마 선택은 고르는 즉시 반영·저장한다(체크박스들과 같은 즉시 적용 관용구).
 $('set-theme')?.addEventListener('change', (e) => setTheme(e.target.value));
 
@@ -1091,7 +1094,57 @@ async function openSettings() {
   renderAllShortcutRows();
   applyTranslateSettings(s.translate);
   $('set-agy-refresh-status').textContent = '';
+  refreshPdfDefault(); // 비동기 — duti 실행을 기다리느라 설정창이 늦게 뜨지 않게
   $('settings-dialog').showModal();
+}
+
+// ===== PDF 기본 앱 =====
+// macOS는 파일 형식의 기본 앱을 바꾸는 API를 앱에 열어 주지 않는다. 외부 도구 duti가 있으면
+// 한 번에 바꾸고, 없으면 Finder로 직접 하는 방법을 안내한다. 어느 쪽이든 Info.plist 선언 덕에
+// "다음으로 열기" 목록에는 이미 wcompare가 올라와 있다.
+const FINDER_STEPS = 'PDF 파일 하나를 Finder에서 선택 → ⌘I(정보 가져오기) → '
+  + '"다음으로 열기"에서 wcompare 선택 → "모두 변경…" 버튼.';
+
+async function refreshPdfDefault() {
+  const status = $('set-pdf-default-status');
+  const hint = $('set-pdf-default-hint');
+  const btn = $('set-pdf-default');
+  if (!status) return;
+  status.textContent = '확인 중…';
+  hint.textContent = '';
+  let info;
+  try {
+    info = await window.wcompare.pdfDefault.get();
+  } catch (e) {
+    status.textContent = '확인 실패';
+    hint.textContent = ipcMessage(e);
+    return;
+  }
+  if (!info.duti) {
+    // 확인조차 못 하는 상태다. "다른 앱이 기본"이라고 단정하지 않는다 — 모르는 것은 모른다고 쓴다.
+    status.textContent = '현재 설정을 확인할 수 없습니다';
+    btn.disabled = false;
+    hint.textContent = `직접 지정: ${FINDER_STEPS}\n(brew install duti 를 설치하면 이 버튼으로 한 번에 바꿀 수 있습니다.)`;
+    return;
+  }
+  status.textContent = info.isOurs ? '현재 기본 앱: wcompare' : `현재 기본 앱: ${info.handler || '알 수 없음'}`;
+  btn.disabled = !!info.isOurs;
+  hint.textContent = info.isOurs ? '' : `버튼을 누르거나, 직접 지정: ${FINDER_STEPS}`;
+}
+
+async function setPdfDefault() {
+  const hint = $('set-pdf-default-hint');
+  const btn = $('set-pdf-default');
+  btn.disabled = true;
+  try {
+    const res = await window.wcompare.pdfDefault.set();
+    if (res.ok) { await refreshPdfDefault(); return; }
+    if (res.reason === 'no-duti') hint.textContent = `duti가 없어 자동 지정을 못 했습니다. ${FINDER_STEPS}`;
+    else hint.textContent = `지정 실패(${res.reason}): ${res.message || ''}\n${FINDER_STEPS}`;
+  } catch (e) {
+    hint.textContent = '지정 실패: ' + ipcMessage(e);
+  }
+  btn.disabled = false;
 }
 
 window.wcompare.onProjectLoad(async (p) => {
@@ -1141,6 +1194,26 @@ window.wcompare.onOpenRecentFile((p) => {
     ? (!pdfPaths.left ? 'left' : (!pdfPaths.right ? 'right' : 'left'))
     : (!editorApi.getState('left').path ? 'left' : (!editorApi.getState('right').path ? 'right' : 'left'));
   openByPath(empty, p);
+});
+
+// Finder에서 연 파일 (PDF 기본 앱). 비어 있는 pane부터 채운다 — 이 앱은 대조가 본업이라
+// 두 번째 문서가 옆 칸에 붙는 편이 자연스럽다. 양쪽이 다 찼으면 새 창을 청한다:
+// 보고 있던 문서를 말없이 밀어내지 않기 위해서다.
+const emptySideFor = (p) => (isPdf(p)
+  ? (!pdfPaths.left ? 'left' : (!pdfPaths.right ? 'right' : null))
+  : (!editorApi.getState('left').path ? 'left' : (!editorApi.getState('right').path ? 'right' : null)));
+
+window.wcompare.onOpenFiles(async (paths) => {
+  const overflow = [];
+  for (const p of paths || []) {
+    const side = emptySideFor(p);
+    if (side) await openByPath(side, p);
+    else overflow.push(p);
+  }
+  if (overflow.length) {
+    await window.wcompare.openInNewWindow(overflow)
+      .catch((e) => alert('새 창을 열 수 없습니다: ' + ipcMessage(e)));
+  }
 });
 
 window.wcompare.onOpenPair(async ({ left, right }) => {

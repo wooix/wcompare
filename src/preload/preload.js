@@ -44,6 +44,11 @@ contextBridge.exposeInMainWorld('wcompare', {
     set: (patch) => ipcRenderer.invoke('settings:set', patch),
     pickStorageDir: () => ipcRenderer.invoke('settings:pick-storage-dir'),
   },
+  // PDF 기본 앱 조회·지정. 어떤 앱을 앉힐지는 렌더러가 정하지 않는다(main이 자기 번들 ID를 쓴다).
+  pdfDefault: {
+    get: () => ipcRenderer.invoke('system:pdf-default', { set: false }),
+    set: () => ipcRenderer.invoke('system:pdf-default', { set: true }),
+  },
   // 실시간 사전: 외부 앱(ShortcutDictionary)에 위임 — 인자 없이 Control+Shift+D를 트리거한다.
   // 선택 텍스트는 그 앱이 자체적으로 읽으므로 렌더러가 텍스트/경로를 넘기지 않는다.
   dict: {
@@ -58,6 +63,10 @@ contextBridge.exposeInMainWorld('wcompare', {
     save: (path, markers) => ipcRenderer.invoke('markers:save', path, markers),
     load: (path) => ipcRenderer.invoke('markers:load', path),
   },
+  // Finder에서 연 파일 (PDF 기본 앱). 경로는 main이 허용목록에 등록한 뒤 보내 준다.
+  onOpenFiles: (cb) => ipcRenderer.on('open-files', (_e, paths) => cb(paths)),
+  // 양쪽 pane이 다 찼을 때 남은 파일을 새 창에 띄워 달라고 청한다(main이 경로를 재검문).
+  openInNewWindow: (paths) => ipcRenderer.invoke('window:open-files', paths),
   onProjectLoad: (cb) => ipcRenderer.on('project:load', (_e, p) => cb(p)),
   // 최근 파일: 메뉴 클릭 시 main이 allowlist에 등록한 경로를 보낸다
   onOpenRecentFile: (cb) => ipcRenderer.on('menu:open-recent-file', (_e, p) => cb(p)),

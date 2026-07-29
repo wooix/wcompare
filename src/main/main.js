@@ -1,7 +1,9 @@
 const { app, BrowserWindow, shell } = require('electron');
 const path = require('node:path');
 const { registerScheme, handleScheme, APP_ORIGIN } = require('./scheme');
-const { registerIpc, cancelTranslation, cancelForWebContents } = require('./ipc');
+const {
+  registerIpc, cancelTranslation, cancelForWebContents, registerOpenInNewWindow,
+} = require('./ipc');
 const { allowPath } = require('./allowlist');
 const { applyMenu, setHandlers } = require('./menu');
 const project = require('./project');
@@ -37,6 +39,40 @@ function createWindow(pair = { left: null, right: null }) {
   wc.on('destroyed', () => { cancelForWebContents(wc.id); project.forget(wc.id); });
 }
 
+// ===== Finder에서 연 파일 (PDF 기본 앱) =====
+// macOS는 Finder로 연 파일을 argv가 아니라 'open-file' 이벤트로 알려 준다. 이 핸들러가 없으면
+// 기본 앱으로 지정해도 창만 뜨고 문서는 열리지 않는다.
+// whenReady() '밖'에 등록해야 한다 — 파일 더블클릭으로 앱을 처음 띄우면 준비되기 전에 도착한다.
+// (Info.plist의 CFBundleDocumentTypes 선언은 scripts/pack-mac.mjs에 있다. 둘 다 있어야 동작한다.)
+const pendingFiles = [];
+let flushTimer = null;
+
+function routeOpenFiles(files) {
+  const paths = files.map((f) => allowPath(f)); // 경로를 허용목록에 등록하는 주체는 언제나 main
+  files.forEach((f) => require('./recentFiles').record(f));
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!win) { createWindow({ left: paths[0] || null, right: paths[1] || null }); return; }
+  // 어느 pane이 비었는지는 렌더러만 안다. 자리 배치는 렌더러에 맡기고, 자리가 없으면
+  // 렌더러가 window:open-files로 되물어 새 창을 받는다.
+  win.webContents.send('open-files', paths);
+  if (win.isMinimized()) win.restore();
+  win.focus();
+}
+
+function flushPendingFiles() {
+  if (!app.isReady() || !pendingFiles.length) return;
+  routeOpenFiles(pendingFiles.splice(0));
+}
+
+app.on('open-file', (event, filePath) => {
+  event.preventDefault(); // 없으면 macOS 기본 처리로 넘어간다
+  pendingFiles.push(filePath);
+  // Finder에서 두 개를 한꺼번에 열면 이벤트가 연달아 온다. 한 틱 모아 좌/우로 나란히 띄운다
+  // — 이 앱의 본래 쓰임새가 대조이기 때문.
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(flushPendingFiles, 50);
+});
+
 app.on('web-contents-created', (_e, contents) => {
   contents.on('will-navigate', (e) => e.preventDefault());
   contents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
@@ -50,7 +86,12 @@ app.whenReady().then(() => {
   require('./recentFiles').setOnChange(applyMenu);
   setHandlers({ newWindow: () => createWindow() }); // ⌘N — 빈 창을 새로 연다
   applyMenu();
+  // 렌더러가 "이 창엔 자리가 없다"고 알려 오면 새 창에 띄운다. 경로는 여기서 다시 검문한다
+  // — 렌더러가 임의 경로로 창을 열게 두면 허용목록 원칙이 무너진다.
+  registerOpenInNewWindow(createWindow);
   createWindow(firstPair);
+  // 파일 더블클릭으로 앱이 처음 뜬 경우, open-file은 이미 도착해 큐에 쌓여 있다.
+  flushPendingFiles();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

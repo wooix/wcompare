@@ -42,6 +42,32 @@ PDF **야간 모드**(`Night`)는 이와 **별개**입니다 — 야간 모드�
 - 편집기 패널에 파일 **드래그앤드롭** (왼쪽 절반=좌, 오른쪽 절반=우)
 - CLI 인자: `electron . a.py b.py`
 - **URL로 PDF 열기**: PDF 모드에서 왼쪽 화면이 비어 있으면 URL 입력창이 나타납니다 ([아래](#url로-pdf-열기))
+- **Finder에서 열기**: PDF를 더블클릭하거나 앱 아이콘에 끌어다 놓기 ([아래](#pdf-기본-앱으로-지정))
+
+### PDF 기본 앱으로 지정
+
+`.app` 은 PDF 문서 타입을 선언하므로 Finder의 **"다음으로 열기"** 목록에 wcompare가 나타납니다.
+기본 앱으로 바꾸는 방법은 두 가지입니다.
+
+- **설정창 → PDF 기본 앱 → `wcompare로 지정`**. [duti](https://github.com/moretension/duti)
+  (`brew install duti`)가 설치돼 있을 때만 동작합니다 — macOS는 파일 형식의 기본 앱을 바꾸는 API를
+  앱에 열어 주지 않아(`setAsDefaultProtocolClient` 는 URL 스킴 전용) 외부 도구가 필요합니다.
+- **Finder에서 직접**: PDF 하나 선택 → `⌘I` → "다음으로 열기"에서 wcompare → **모두 변경…**
+
+빌드 직후 목록에 안 보이면 LaunchServices에 등록해 주십시오.
+
+```bash
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/wcompare.app
+```
+
+Finder에서 연 파일이 놓이는 자리:
+
+| 상황 | 결과 |
+|---|---|
+| 창이 없음 | 새 창에 엽니다 |
+| 한쪽만 차 있음 | **비어 있는 반대쪽**에 엽니다 (바로 대조 상태가 됩니다) |
+| 양쪽 다 차 있음 | **새 창**에 엽니다 (보던 문서를 밀어내지 않습니다) |
+| 두 개를 한꺼번에 선택 | 한 창의 좌·우에 나란히 엽니다 |
 
 ## 단축키
 
