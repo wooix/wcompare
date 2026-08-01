@@ -121,6 +121,10 @@ test('설정창에 번역 엔진·모델 섹션이 뜨고 값을 바꾸면 저�
 
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('menu:settings'));
   await win.waitForSelector('#settings-dialog[open]', { timeout: 10000 });
+  // 설정창이 3탭이 되면서 번역 항목은 '번역' 탭 안으로 들어갔다. 처음 열리는 탭은 '일반'이라
+  // 이 클릭이 없으면 selectOption/fill이 가시성 검사에서 그대로 멈춘다(값을 읽는 toHaveValue는
+  // 숨어 있어도 통과해 버려, 아래 조작 단계에서야 타임아웃으로 터진다).
+  await win.click('#set-tab-translate');
 
   // 기본값이 표시된다
   await expect(win.locator('#set-translate-engine')).toHaveValue('agy');

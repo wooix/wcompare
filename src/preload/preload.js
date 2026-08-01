@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld('wcompare', {
   summary: {
     load: (path) => ipcRenderer.invoke('summary:load', path),
     save: (path, parts, meta) => ipcRenderer.invoke('summary:save', path, parts, meta),
+    // 내장 요약 프롬프트 원문(설정창이 편집 칸의 초기값·'기본값' 버튼에 쓴다). 인자를 받지 않는다 —
+    // 사용자가 고친 값은 settings.summaryPrompts로 오가고, 이쪽은 읽기 전용 상수다.
+    promptDefaults: () => ipcRenderer.invoke('summary:prompt-defaults'),
   },
   onTranslateProgress: (cb) => ipcRenderer.on('pdf:translate:progress', (_e, d) => cb(d)),
   // 드롭된 File에서 OS 경로 추출 (최신 Electron은 File.path 제거 → webUtils 사용)
@@ -38,7 +41,8 @@ contextBridge.exposeInMainWorld('wcompare', {
     saveAs: (snapshot, name) => ipcRenderer.invoke('project:save-as', snapshot, name),
     recents: () => ipcRenderer.invoke('project:recents'),
   },
-  // 설정: 렌더러는 boolean 두 개만 바꿀 수 있고 보관 폴더는 pickStorageDir(=main dialog)로만 바꾼다.
+  // 설정: set으로 넘긴 patch는 main이 키 화이트리스트로 한 번 거른다(보관 폴더는 여기로 못 바꾼다 —
+  // pickStorageDir, 즉 main의 dialog를 거쳐야 한다).
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
     set: (patch) => ipcRenderer.invoke('settings:set', patch),

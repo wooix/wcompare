@@ -36,6 +36,17 @@ const DEFAULTS = {
     agyModels: [],
     claudeModels: ['sonnet', 'opus', 'haiku'],
   },
+  // 요약 프롬프트 override. 빈 문자열 = 내장 기본값(paperSummary.PROMPT_DEFAULTS) 사용
+  // — translate.agyModel이 ''이면 엔진 기본 모델을 쓰는 것과 같은 관례다.
+  // 왜 "고친 적 없으면 빈 문자열"인가: 사용자가 손대지 않은 칸에 기본 문구를 그대로 복사해 두면,
+  // 나중에 내장 프롬프트를 개선해도 옛 문구가 설정 파일에 박제돼 아무에게도 반영되지 않는다.
+  // 여기 하위값은 전부 문자열이라 settingsStore가 그대로 받아 준다(객체 키의 문자열 하위값 규칙).
+  summaryPrompts: {
+    common: '',
+    overviewSpec: '', overviewTail: '',
+    sectionsSpec: '', sectionsTail: '',
+    flowSpec: '', flowTail: '',
+  },
 };
 
 let store = null;

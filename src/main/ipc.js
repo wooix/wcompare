@@ -10,7 +10,7 @@ const {
 } = require('./transpaper.js');
 const { allowed, openedPdfs, normalize, allowPath } = require('./allowlist.js');
 const { downloadPdf } = require('./pdfDownload.js');
-const { summarize, KINDS: SUMMARY_KINDS } = require('./paperSummary.js');
+const { summarize, KINDS: SUMMARY_KINDS, PROMPT_DEFAULTS, MAX_PROMPT_PART_CHARS } = require('./paperSummary.js');
 const summaryStore = require('./summaryStore.js');
 const { triggerShortcutDict } = require('./shortcutDict.js');
 const markerStore = require('./markerStore.js');
@@ -159,7 +159,8 @@ function registerIpc() {
 
   // ===== 설정 =====
   ipcMain.handle('settings:get', () => settings.get());
-  // 렌더러는 boolean 두 개만 바꿀 수 있다 (storageDir는 dialog를 거쳐야 바꾼다 — 임의 경로 쓰기 방지).
+  // 렌더러가 바꿀 수 있는 키는 아래 화이트리스트뿐이다 (storageDir는 빠져 있다 — 보관 폴더는
+  // dialog를 거쳐야만 바뀐다. 렌더러가 임의 경로를 설정에 앉히면 그 경로가 곧 쓰기 대상이 된다).
   ipcMain.handle('settings:set', (_e, patch = {}) => {
     const next = {};
     if (typeof patch.archivePdfOnOpen === 'boolean') next.archivePdfOnOpen = patch.archivePdfOnOpen;
@@ -169,6 +170,20 @@ function registerIpc() {
     if (patch.ui && typeof patch.ui === 'object' && !Array.isArray(patch.ui)) next.ui = patch.ui;
     if (patch.translate && typeof patch.translate === 'object' && !Array.isArray(patch.translate)) {
       next.translate = patch.translate;
+    }
+    // 요약 프롬프트 override도 같은 관용구로 통과시킨다. 이 화이트리스트에 키를 더하는 것을
+    // 잊으면 settingsStore는 멀쩡한데 렌더러의 저장만 조용히 사라진다 — 오류도 안 난다.
+    if (patch.summaryPrompts && typeof patch.summaryPrompts === 'object' && !Array.isArray(patch.summaryPrompts)) {
+      // 저장 시점에도 칸당 상한을 건다. 프롬프트로 쓰일 때는 sanitizePromptPart가 어차피 여기서
+      // 자르므로, 더 긴 값을 디스크에 남겨 봐야 두 가지만 남는다: "칸에는 보이는데 프롬프트에는
+      // 안 나가는" 글자, 그리고 settings.json 비대 — 설정 파일은 dirFor()가 마커·요약·번역을
+      // 저장할 때마다 동기로 읽으므로 여기가 커지면 앱 전체가 느려진다. UI의 maxlength가 1차
+      // 방어지만 렌더러 방어는 신뢰하지 않는 것이 이 파일의 원칙이다. 문자열 아닌 값은
+      // settingsStore가 걸러 주니 여기서는 길이만 본다.
+      next.summaryPrompts = {};
+      for (const [k, v] of Object.entries(patch.summaryPrompts)) {
+        next.summaryPrompts[k] = typeof v === 'string' ? v.slice(0, MAX_PROMPT_PART_CHARS) : v;
+      }
     }
     return settings.set(next);
   });
@@ -365,7 +380,13 @@ function registerIpc() {
     if (summaryJobs.has(wcId)) throw new Error('이 창에서 이미 요약이 진행 중입니다');
 
     const s = settings.get();
-    const job = summarize(kind, { title, outline, text }, { translateSettings: s.translate });
+    // summaryPrompts는 사용자가 설정창에서 고친 프롬프트 문구다. 여기서는 설정을 그대로 넘기기만 하고
+    // 빈 칸→기본값 대체·제어문자 제거·칸당 길이 상한은 paperSummary가 한다 — 프롬프트를 조립하는
+    // 곳이 한 군데뿐이어야 "빈 문자열 = 내장 기본값" 관례가 호출부마다 갈리지 않는다.
+    const job = summarize(kind, { title, outline, text }, {
+      translateSettings: s.translate,
+      summaryPrompts: s.summaryPrompts,
+    });
     summaryJobs.add(wcId, `${p}::${kind}`, job);
     try {
       return await job.promise;
@@ -391,6 +412,17 @@ function registerIpc() {
     if (!openedPdfs.has(p)) throw new Error('summary save denied: 이 세션에서 연 PDF가 아닙니다');
     return summaryStore.save(settings.dirFor('summaries'), p, parts, meta);
   });
+
+  // 내장 요약 프롬프트 원문. 설정창이 편집 칸을 열 때 "저장된 override가 없으면 기본값을 채워
+  // 보여주기" 위해 필요하다 — 여러 줄짜리 긴 지시문이라 placeholder로는 보여줄 수 없다.
+  //
+  // 이 파일의 다른 핸들러들과 달리 normalize/openedPdfs 검문이 없는데, 빠뜨린 것이 아니다:
+  // 인자를 하나도 받지 않고 돌려주는 것도 paperSummary.js에 박혀 있는 정적 문자열뿐이라,
+  // 렌더러가 값을 흘려 넣어 경로를 만들어 낼 여지 자체가 없다. 검문할 입력이 없는 것이다.
+  // (나중에 인자를 받도록 고치는 순간 이 면제는 깨진다 — 그때는 검문을 되살려야 한다.)
+  // 반환값을 그대로 내보내도 안전하다: IPC는 structured clone이라 렌더러가 받는 것은 사본이고,
+  // 렌더러에서 뭘 하든 main의 기본값 객체는 그대로 남는다.
+  ipcMain.handle('summary:prompt-defaults', () => PROMPT_DEFAULTS);
 
   // PDF 우클릭 메뉴. 렌더러가 "선택이 있는가 / 이 좌표에 마커가 있는가"만 알려주고,
   // 메뉴 구성은 메인이 한다(렌더러가 임의 메뉴를 띄우지 못하게).

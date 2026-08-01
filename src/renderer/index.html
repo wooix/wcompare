@@ -390,8 +390,11 @@
   /* type을 생략한 입력(#set-agy-model, #set-claude-model)까지 함께 잡는다.
      [type=text]만 겨냥하면 그 둘이 네이티브 흰 입력으로 남아 다크에서 구멍처럼 보였다 —
      테마를 실제로 동작하는 기능으로 만드는 이상 반쪽만 따르는 컨트롤을 남길 이유가 없다.
-     체크박스는 네이티브 렌더가 맞으므로 제외한다. */
-  dialog input:not([type=checkbox]) { background:var(--bg-input); color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:4px 6px; }
+     체크박스는 네이티브 렌더가 맞으므로 제외한다.
+     textarea(요약 프롬프트 편집칸)도 같은 옷을 입힌다 — 입력과 정확히 같은 사고가 여기서도
+     일어난다. 게다가 textarea는 화면을 크게 차지해서, 빠뜨리면 다크 설정창 한가운데에
+     흰 판이 놓인다. */
+  dialog input:not([type=checkbox]), dialog textarea { background:var(--bg-input); color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:4px 6px; }
   dialog button { background:var(--bg-btn); color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:3px 10px; cursor:pointer; margin-left:6px; }
   dialog button:hover { background:var(--bg-btn-hover); }
   /* select는 브라우저 기본 스타일이 항상 밝은 색이라 다크에서 홀로 튄다 → 입력·버튼과 같은 옷을 입힌다.
@@ -408,6 +411,43 @@
     padding:4px 6px; text-align:center; font:13px sans-serif; cursor:pointer; }
   .sc-row .sc-key.capturing { border-color:var(--accent); color:var(--info); }
   .sc-row .sc-warn { color:var(--warn); font-size:11px; }
+
+  /* ===== 설정창 탭 (일반 / 번역 / 요약 프롬프트) =====
+     항목이 세 묶음으로 늘어 한 화면에 세로로 다 쌓으면 다이얼로그가 화면 밖으로 자란다
+     — 요약 프롬프트만 해도 여러 줄짜리 textarea가 일곱 칸이다.
+     색은 전부 기존 변수로만 쓴다. 설정창은 두 테마에서 다 뜨므로 여기에 색 리터럴을 적는 순간
+     한쪽 테마가 깨진다(요약 패널의 .sum-tab과 같은 관용구를 그대로 따라간다). */
+  #settings-dialog { width:600px; max-width:92vw; }
+  .set-tabs { display:flex; gap:4px; margin:0 0 10px; padding-bottom:8px; border-bottom:1px solid var(--border-faint); }
+  .set-subtabs { display:flex; gap:4px; margin:10px 0 6px; }
+  /* margin-left:0 은 `dialog button`의 margin-left:6px를 지우려는 것이다 — 간격은 flex gap이 맡는데
+     둘이 겹치면 탭 사이만 넓어져 들쭉날쭉해진다. */
+  .set-tab, .set-subtab { margin-left:0; background:var(--bg-tab); color:var(--fg-dim);
+    border:1px solid var(--border-tab); border-radius:4px; padding:3px 10px; cursor:pointer; font:12px sans-serif; }
+  .set-tab:hover, .set-subtab:hover { background:var(--bg-tab-hover); }
+  .set-tab.on, .set-subtab.on { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
+  .set-subtab { padding:2px 8px; font-size:11px; }
+  /* 탭마다 내용 높이가 달라 전환할 때 창이 널뛴다 → 최소 높이를 준다.
+     넘칠 때는 다이얼로그가 아니라 이 패널 안에서 스크롤한다 — 아래 '닫기' 버튼이 화면 밖으로
+     밀려나면 설정창을 마우스로는 닫을 수 없게 된다. */
+  .set-panel { display:none; min-height:230px; max-height:60vh; overflow-y:auto; padding-right:4px; }
+  .set-panel.on { display:block; }
+  /* 스크롤바는 CSS가 아니라 OS가 그린다 — color-scheme으로 어느 테마인지 알려 주지 않으면
+     다크 설정창 오른쪽에 흰 띠가 세로로 선다(입력·select에 옷을 입힌 것과 같은 사고다).
+     두 방향을 다 적어야 한다: 다크로 못 박으면 이번에는 라이트 테마에서 검은 띠가 생긴다.
+     .set-panel에만 건다 — 앱의 다른 스크롤 영역(.sum-body, .pdf-outline 등)도 같은 처지지만
+     그건 이 작업의 범위가 아니다. */
+  .set-panel { color-scheme: dark; }
+  :root[data-theme="light"] .set-panel { color-scheme: light; }
+  .set-prompt-panel { display:none; }
+  .set-prompt-panel.on { display:block; }
+  .set-prompt-row { margin:10px 0; }
+  .set-prompt-head { display:flex; align-items:center; gap:8px; margin-bottom:4px; color:var(--fg-muted); }
+  .set-prompt-head .set-prompt-reset { margin-left:auto; padding:2px 8px; font-size:11px; }
+  /* 프롬프트는 한 줄에 지시 하나씩 늘어놓은 글이라 등폭 글꼴이 눈으로 훑기 좋다.
+     resize:vertical — 가로로 늘릴 수 있게 두면 다이얼로그 폭을 넘겨 버튼들이 밀려난다. */
+  textarea.set-prompt { display:block; width:100%; box-sizing:border-box; resize:vertical; font:12px/1.55 monospace; }
+  .set-note { color:var(--fg-subtle); font-size:11px; line-height:1.6; }
 </style>
 </head>
 <body>
@@ -448,6 +488,10 @@
       <button id="btn-del-translation">번역본 삭제</button>
     </span>
     <span id="toolbar-status" style="margin-left:auto; color:var(--info); font:12px monospace;"></span>
+    <!-- 설정 버튼은 툴바의 항상 맨 끝이다: 상태 표시가 margin-left:auto로 우측에 붙으므로 그 뒤에
+         두면 PDF 모드(2줄)에서는 둘째 줄 끝, diff 모드(1줄)에서는 줄 끝에 온다. ⚙ 뒤의 FE0E는
+         텍스트 표현 강제 — 이모지로 그려지면 옆 버튼들과 색·크기가 어긋난다. -->
+    <button id="btn-settings" title="설정 (⌘,)">⚙&#xFE0E;</button>
   </div>
   <div id="diff-wrap">
     <div id="md-toc-left" class="md-toc"></div>
@@ -469,38 +513,51 @@
     </form>
   </dialog>
 
+  <!-- 설정 다이얼로그. 세 탭(일반 / 번역 / 요약 프롬프트)으로 나뉜다.
+       탭 패널은 감싸기만 하고 안쪽 항목의 id·동작은 그대로다 — e2e가 그 id들을 직접 잡는다.
+       처음 열리는 탭은 여기 마크업의 .on 클래스가 정한다(app.js가 아니다):
+       e2e에는 openSettings를 거치지 않고 showModal()로 곧장 띄우는 경로가 있다.
+       한 번 연 뒤에는 마지막에 보던 탭이 유지된다 — "항상 일반 탭으로 열린다"가 아니다. -->
   <dialog id="settings-dialog">
     <div style="color:var(--fg); margin-bottom:10px; font-weight:bold;">설정</div>
-    <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
-      <span style="width:70px; display:inline-block; color:var(--fg-dim);">테마</span>
-      <select id="set-theme">
-        <option value="dark">다크</option>
-        <option value="light">라이트</option>
-      </select>
+    <div class="set-tabs" id="settings-tabs">
+      <button type="button" class="set-tab on" id="set-tab-general" data-tab="general">일반</button>
+      <button type="button" class="set-tab" id="set-tab-translate" data-tab="translate">번역</button>
+      <button type="button" class="set-tab" id="set-tab-prompts" data-tab="prompts">요약 프롬프트</button>
     </div>
-    <div style="margin-bottom:8px;">
-      <div style="color:var(--fg-subtle); font-size:11px;">기록 보관 위치</div>
-      <input id="set-storage-path" type="text" readonly style="width:300px" />
-      <button id="set-storage-change">변경…</button>
-    </div>
-    <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-archive-pdf" /> PDF를 열 때 보관 폴더에 사본 저장</label>
-    <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-keep-translations" /> 번역본을 보관 폴더에 저장</label>
 
-    <div style="margin-top:12px; border-top:1px solid var(--border-soft); padding-top:10px;">
-      <div style="color:var(--fg-subtle); font-size:11px; margin-bottom:6px;">PDF 기본 앱</div>
-      <div style="display:flex; align-items:center; gap:8px;">
-        <span id="set-pdf-default-status" style="color:var(--fg-muted);">확인 중…</span>
-        <button id="set-pdf-default">wcompare로 지정</button>
+    <div class="set-panel on" id="set-panel-general" data-tab="general">
+      <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
+        <span style="width:70px; display:inline-block; color:var(--fg-dim);">테마</span>
+        <select id="set-theme">
+          <option value="dark">다크</option>
+          <option value="light">라이트</option>
+        </select>
       </div>
-      <div id="set-pdf-default-hint" style="color:var(--fg-subtle); font-size:11px; margin-top:6px; line-height:1.5; white-space:pre-line; max-width:420px;"></div>
+      <div style="margin-bottom:8px;">
+        <div style="color:var(--fg-subtle); font-size:11px;">기록 보관 위치</div>
+        <input id="set-storage-path" type="text" readonly style="width:300px" />
+        <button id="set-storage-change">변경…</button>
+      </div>
+      <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-archive-pdf" /> PDF를 열 때 보관 폴더에 사본 저장</label>
+      <label style="display:block; margin:6px 0;"><input type="checkbox" id="set-keep-translations" /> 번역본을 보관 폴더에 저장</label>
+
+      <div style="margin-top:12px; border-top:1px solid var(--border-soft); padding-top:10px;">
+        <div style="color:var(--fg-subtle); font-size:11px; margin-bottom:6px;">PDF 기본 앱</div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span id="set-pdf-default-status" style="color:var(--fg-muted);">확인 중…</span>
+          <button id="set-pdf-default">wcompare로 지정</button>
+        </div>
+        <div id="set-pdf-default-hint" style="color:var(--fg-subtle); font-size:11px; margin-top:6px; line-height:1.5; white-space:pre-line; max-width:420px;"></div>
+      </div>
+
+      <div style="margin-top:12px; border-top:1px solid var(--border-soft); padding-top:10px;">
+        <div style="color:var(--fg-subtle); font-size:11px; margin-bottom:6px;">토글 단축키 (변경을 누르고 원하는 키 조합을 누르세요 · Esc 취소)</div>
+        <div id="shortcut-rows"></div>
+      </div>
     </div>
 
-    <div style="margin-top:12px; border-top:1px solid var(--border-soft); padding-top:10px;">
-      <div style="color:var(--fg-subtle); font-size:11px; margin-bottom:6px;">토글 단축키 (변경을 누르고 원하는 키 조합을 누르세요 · Esc 취소)</div>
-      <div id="shortcut-rows"></div>
-    </div>
-
-    <div style="margin-top:12px; border-top:1px solid var(--border-soft); padding-top:10px;">
+    <div class="set-panel" id="set-panel-translate" data-tab="translate">
       <div style="color:var(--fg-subtle); font-size:11px; margin-bottom:6px;">번역 엔진·모델 (비우면 엔진 기본값 사용)</div>
       <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
         <span style="width:70px; display:inline-block; color:var(--fg-muted);">엔진</span>
@@ -520,6 +577,91 @@
         <span style="width:70px; display:inline-block; color:var(--fg-muted);">claude 모델</span>
         <input id="set-claude-model" list="claude-model-list" placeholder="(기본값)" style="width:200px" />
         <datalist id="claude-model-list"></datalist>
+      </div>
+    </div>
+
+    <!-- 요약 프롬프트. 편집칸은 전부 .set-prompt + data-key 하나로만 구분한다 —
+         app.js가 칸마다 코드를 따로 두지 않고 이 목록을 훑어 채우고 저장한다.
+         '기본값' 버튼은 같은 data-key로 짝을 찾는다.
+         maxlength=8000은 main의 상한(paperSummary.MAX_PROMPT_PART_CHARS)과 같은 값이다.
+         main은 넘친 부분을 조용히 자르므로, 화면에서 미리 막지 않으면 "칸에는 적혀 있는데
+         프롬프트에는 안 나가는" 글자가 생긴다 — 사용자에게는 모델이 지시를 무시하는 것처럼
+         보인다. (settings.json을 손으로 고쳐 8000자를 넘기면 programmatic 대입이라 maxlength에
+         안 걸려 그대로 보이는데, 그 경로까지는 막지 않는다 — main의 상한이 최후 방어선이다.) -->
+    <div class="set-panel" id="set-panel-prompts" data-tab="prompts">
+      <div class="set-note" style="margin-bottom:8px;">
+        요약을 시킬 때 모델에게 주는 <b>지시문</b>만 고칩니다.
+        <b>[논문 제목] · [목차] · [본문]</b>은 코드가 알아서 붙이고, 본문 길이 상한(12만자)도 코드가 지킵니다.
+        칸을 비우거나 '기본값'을 누르면 앱에 내장된 기본 프롬프트를 씁니다.
+      </div>
+      <!-- 기본 프롬프트 로드 실패 시에만 보인다(app.js가 토글). 편집칸도 함께 잠긴다. -->
+      <div class="set-note" id="set-prompt-err" style="display:none; color:var(--warn); margin-bottom:8px;">
+        기본 프롬프트를 불러오지 못해 편집을 잠갔습니다. 앱을 다시 시작해 보세요.
+      </div>
+
+      <div class="set-prompt-row">
+        <div class="set-prompt-head">
+          <span>공통 규칙 (3탭 공통)</span>
+          <button type="button" class="set-prompt-reset" data-key="common">기본값</button>
+        </div>
+        <textarea class="set-prompt" id="set-prompt-common" data-key="common" rows="9" spellcheck="false" maxlength="8000"></textarea>
+      </div>
+
+      <div class="set-subtabs" id="set-prompt-tabs">
+        <button type="button" class="set-subtab on" id="set-prompt-tab-overview" data-tab="overview">Overview</button>
+        <button type="button" class="set-subtab" id="set-prompt-tab-sections" data-tab="sections">절별 요약</button>
+        <button type="button" class="set-subtab" id="set-prompt-tab-flow" data-tab="flow">흐름도</button>
+      </div>
+
+      <div class="set-prompt-panel on" id="set-prompt-panel-overview" data-tab="overview">
+        <div class="set-prompt-row">
+          <div class="set-prompt-head">
+            <span>Overview 지시문</span>
+            <button type="button" class="set-prompt-reset" data-key="overviewSpec">기본값</button>
+          </div>
+          <textarea class="set-prompt" id="set-prompt-overview-spec" data-key="overviewSpec" rows="11" spellcheck="false" maxlength="8000"></textarea>
+        </div>
+        <div class="set-prompt-row">
+          <div class="set-prompt-head">
+            <span>Overview 마무리 지시 (본문 뒤에 한 번 더 붙습니다)</span>
+            <button type="button" class="set-prompt-reset" data-key="overviewTail">기본값</button>
+          </div>
+          <textarea class="set-prompt" id="set-prompt-overview-tail" data-key="overviewTail" rows="3" spellcheck="false" maxlength="8000"></textarea>
+        </div>
+      </div>
+
+      <div class="set-prompt-panel" id="set-prompt-panel-sections" data-tab="sections">
+        <div class="set-prompt-row">
+          <div class="set-prompt-head">
+            <span>절별 요약 지시문</span>
+            <button type="button" class="set-prompt-reset" data-key="sectionsSpec">기본값</button>
+          </div>
+          <textarea class="set-prompt" id="set-prompt-sections-spec" data-key="sectionsSpec" rows="11" spellcheck="false" maxlength="8000"></textarea>
+        </div>
+        <div class="set-prompt-row">
+          <div class="set-prompt-head">
+            <span>절별 요약 마무리 지시 (본문 뒤에 한 번 더 붙습니다)</span>
+            <button type="button" class="set-prompt-reset" data-key="sectionsTail">기본값</button>
+          </div>
+          <textarea class="set-prompt" id="set-prompt-sections-tail" data-key="sectionsTail" rows="3" spellcheck="false" maxlength="8000"></textarea>
+        </div>
+      </div>
+
+      <div class="set-prompt-panel" id="set-prompt-panel-flow" data-tab="flow">
+        <div class="set-prompt-row">
+          <div class="set-prompt-head">
+            <span>흐름도 지시문</span>
+            <button type="button" class="set-prompt-reset" data-key="flowSpec">기본값</button>
+          </div>
+          <textarea class="set-prompt" id="set-prompt-flow-spec" data-key="flowSpec" rows="11" spellcheck="false" maxlength="8000"></textarea>
+        </div>
+        <div class="set-prompt-row">
+          <div class="set-prompt-head">
+            <span>흐름도 마무리 지시 (본문 뒤에 한 번 더 붙습니다)</span>
+            <button type="button" class="set-prompt-reset" data-key="flowTail">기본값</button>
+          </div>
+          <textarea class="set-prompt" id="set-prompt-flow-tail" data-key="flowTail" rows="3" spellcheck="false" maxlength="8000"></textarea>
+        </div>
       </div>
     </div>
 

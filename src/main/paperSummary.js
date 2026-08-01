@@ -44,6 +44,12 @@ const MAX_MERMAID_CHARS = 20000;
 const MAX_TITLE_CHARS = 300;
 const MAX_OUTLINE_CHARS = 4000;
 
+// 사용자가 설정창에서 고친 프롬프트 문구 한 칸의 상한. 기본 문구가 가장 긴 칸도 1000자가 안 되니
+// 8000자면 크게 늘려 쓸 여유가 있다. 그런데도 상한을 두는 이유: 이 값은 본문과 같은 프롬프트에
+// 실려 나가므로, 상한이 없으면 실수로 논문 한 편을 붙여넣은 것만으로 컨텍스트 한도를 넘겨
+// 요약 세 개가 통째로 실패한다. 본문(MAX_TEXT_CHARS)만 자르고 지시문은 안 자르면 앞뒤가 안 맞는다.
+const MAX_PROMPT_PART_CHARS = 8000;
+
 // engine별 실행 파일 override 환경변수. e2e에서 가짜 셸스크립트를 끼우는 seam이기도 하다.
 const ENGINE_ENV = { agy: 'WCOMPARE_AGY', claude: 'WCOMPARE_CLAUDE' };
 
@@ -185,13 +191,54 @@ const KIND_TAIL = {
   flow: '이제 mermaid 코드블록 하나만 출력하라. 라벨은 큰따옴표로 감싸고 괄호를 쓰지 않는다.',
 };
 
-function buildPrompt(kind, { title, outline, text } = {}) {
-  const spec = KIND_SPEC[kind] || KIND_SPEC.overview;
+// 사용자가 편집할 수 있는 프롬프트 칸 7개의 내장 기본값(설정창이 화면에 채워 보여줄 원문이기도 하다).
+// 배열로 관리하던 것을 여기서 한 번 문자열로 굳힌다 — 설정창의 textarea에 그대로 실리고,
+// 사용자가 고치지 않았는지 판정할 때 이 문자열과 비교하기 때문이다.
+// freeze: IPC로 렌더러에 그대로 나가는 상수라, 어느 호출부가 실수로 고쳐도 다음 요약부터
+// 조용히 다른 프롬프트가 나가는 일이 없게 못 박는다.
+const PROMPT_DEFAULTS = Object.freeze({
+  common: COMMON_RULES.join('\n'),
+  overviewSpec: KIND_SPEC.overview.join('\n'),
+  overviewTail: KIND_TAIL.overview,
+  sectionsSpec: KIND_SPEC.sections.join('\n'),
+  sectionsTail: KIND_TAIL.sections,
+  flowSpec: KIND_SPEC.flow.join('\n'),
+  flowTail: KIND_TAIL.flow,
+});
+
+/**
+ * 사용자 override 한 칸을 프롬프트에 실을 수 있는 형태로 정화한다. 순수 함수(단위 테스트용).
+ * 반환값 ''는 "쓸 만한 override가 없다" = 내장 기본값을 쓰라는 뜻이다.
+ * 설정 파일은 사용자가 직접 고칠 수도 있고 손상될 수도 있으니 문자열이 아닌 값도 조용히 넘긴다.
+ */
+function sanitizePromptPart(v) {
+  if (typeof v !== 'string') return '';
+  // \r을 먼저 개행으로 정규화한다. 그러지 않으면 stripControlChars가 \r을 공백으로 바꿔
+  // CRLF 줄바꿈이 "줄 끝 공백 + 개행"으로 남는다(설정 파일을 윈도우 편집기로 손댄 경우).
+  const s = stripControlChars(v.replace(/\r\n?/g, '\n')).trim();
+  // 제어문자만 있던 칸은 여기서 빈 문자열이 되어 자동으로 기본값으로 돌아간다.
+  return s.length > MAX_PROMPT_PART_CHARS ? s.slice(0, MAX_PROMPT_PART_CHARS) : s;
+}
+
+// override가 쓸 만하면 그것을, 아니면 내장 기본값을 고른다.
+const pickPart = (prompts, key) => sanitizePromptPart(prompts?.[key]) || PROMPT_DEFAULTS[key];
+
+/**
+ * @param {'overview'|'sections'|'flow'} kind
+ * @param {{title?:string, outline?:string|null, text?:string}} doc
+ * @param {object} [prompts] settings.summaryPrompts — 칸별 사용자 override(빈 칸은 기본값)
+ */
+function buildPrompt(kind, { title, outline, text } = {}, prompts = undefined) {
+  // 모르는 kind는 overview로 떨어뜨린다. KIND_SPEC[kind]를 그대로 쓰면 kind='constructor' 같은
+  // 값이 Object.prototype의 것을 집어 와 배열이 아닌 것을 프롬프트에 섞는다.
+  const k = KINDS.includes(kind) ? kind : 'overview';
   const body = clipText(text).text; // 호출측이 이미 잘랐어도 멱등이라 안전하다
+  // 사용자가 고칠 수 있는 것은 이 세 칸뿐이다. [논문 제목]/[목차]/[본문] 주입과 그 상한은
+  // 코드가 계속 쥐고 있는다 — 프롬프트를 아무리 고쳐도 본문이 통째로 실리는 사고는 없어야 한다.
   const lines = [
-    ...COMMON_RULES,
+    pickPart(prompts, 'common'),
     '',
-    ...spec,
+    pickPart(prompts, `${k}Spec`),
     '',
     '[논문 제목]',
     clipField(title, MAX_TITLE_CHARS) || '(제목 미상)',
@@ -199,7 +246,7 @@ function buildPrompt(kind, { title, outline, text } = {}) {
   ];
   const ol = clipField(outline, MAX_OUTLINE_CHARS);
   if (ol) lines.push('[목차]', ol, '');
-  lines.push('[본문]', body, '', KIND_TAIL[kind] || KIND_TAIL.overview);
+  lines.push('[본문]', body, '', pickPart(prompts, `${k}Tail`));
   return lines.join('\n');
 }
 
@@ -423,6 +470,7 @@ function pickEngine(engine, translateSettings) {
  * @param {object} [opts]
  * @param {'agy'|'claude'} [opts.engine] 미지정이면 translateSettings.engine → agy 순으로 고른다
  * @param {object} [opts.translateSettings] settings.get().translate — agyModel/claudeModel/engine
+ * @param {object} [opts.summaryPrompts] settings.get().summaryPrompts — 칸별 프롬프트 override(빈 칸은 기본값)
  * @param {string[]} [opts.extraDirs] PATH 앞에 얹을 디렉터리(테스트에서 []로 실제 CLI 탐색을 막는 seam)
  * @param {number} [opts.maxOutputBytes] 상한 테스트용 주입점(기본 MAX_OUTPUT_BYTES)
  * @param {number} [opts.killGraceMs] SIGTERM 후 SIGKILL까지의 유예(테스트 주입점)
@@ -430,7 +478,7 @@ function pickEngine(engine, translateSettings) {
  */
 function summarize(kind, doc = {}, opts = {}) {
   const {
-    engine, translateSettings, env = process.env, extraDirs,
+    engine, translateSettings, summaryPrompts, env = process.env, extraDirs,
     timeoutMs = DEFAULT_TIMEOUT_MS, maxOutputBytes = MAX_OUTPUT_BYTES, killGraceMs = KILL_GRACE_MS,
   } = opts || {};
 
@@ -448,7 +496,7 @@ function summarize(kind, doc = {}, opts = {}) {
   if (!bin) return { promise: Promise.reject(new Error(notFoundHint(eng))), cancel() {} };
 
   const { text, truncated } = clipText(doc?.text);
-  const prompt = buildPrompt(kind, { title: doc?.title, outline: doc?.outline, text });
+  const prompt = buildPrompt(kind, { title: doc?.title, outline: doc?.outline, text }, summaryPrompts);
 
   // detached: 자신만의 프로세스 그룹을 갖게 해, 취소 시 CLI가 띄운 자식들까지 함께 정리한다.
   const child = spawn(bin, buildSummaryArgs(eng, prompt, translateSettings), {
@@ -548,6 +596,8 @@ function summarize(kind, doc = {}, opts = {}) {
 
 module.exports = {
   summarize, resolveEngineBin, buildSummaryArgs, clipText, buildPrompt, cleanResponse, extractMermaid,
-  keepTailLines,
-  KINDS, MAX_TEXT_CHARS, MAX_OUTPUT_BYTES, DEFAULT_TIMEOUT_MS, MAX_MERMAID_CHARS, MAX_STDERR_BUF_CHARS,
+  keepTailLines, sanitizePromptPart,
+  KINDS, PROMPT_DEFAULTS,
+  MAX_TEXT_CHARS, MAX_OUTPUT_BYTES, DEFAULT_TIMEOUT_MS, MAX_MERMAID_CHARS, MAX_STDERR_BUF_CHARS,
+  MAX_PROMPT_PART_CHARS,
 };

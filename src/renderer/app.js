@@ -775,6 +775,88 @@ $('set-storage-change').onclick = async () => {
 };
 $('settings-close').onclick = () => { endShortcutCapture(); $('settings-dialog').close(); };
 $('set-pdf-default').onclick = () => setPdfDefault();
+// 툴바 톱니 버튼 — 메뉴(File → Settings…)와 같은 openSettings 경로를 탄다(값 채우기 포함).
+$('btn-settings').onclick = () => openSettings();
+
+// ===== 설정창: 탭 (일반 / 번역 / 요약 프롬프트) =====
+// 전환은 클래스 토글이 전부다. 값을 채우고 저장하는 코드는 어느 탭이 보이는지 신경 쓰지 않는다 —
+// openSettings는 숨은 탭의 입력까지 한 번에 채우고, change 핸들러도 미리 다 걸려 있다.
+// 처음 열리는 탭은 여기가 아니라 index.html의 .on 클래스가 정한다: e2e에는 openSettings를
+// 거치지 않고 showModal()로 곧장 띄우는 경로가 있어, JS에서 초기 탭을 정하면 그 경로가 빈다.
+// (한 번 연 뒤에는 마지막에 보던 탭이 그대로 유지된다 — 명시적으로 초기 탭으로 되돌리지 않는다.)
+function pickTab(tabs, panels, name) {
+  // 탭을 옮기기 전에 단축키 캡처를 끝낸다. 캡처 중에는 document capture 단계 리스너가 모든 키를
+  // 삼키는데, "키 입력 대기…" 표시는 일반 탭 안에 있어 다른 탭으로 가면 그 단서마저 숨는다 —
+  // 프롬프트 칸에서 ⌘V를 눌렀는데 붙여넣기는 안 되고 사전 단축키가 Cmd+V로 바뀌는 사고(실측).
+  endShortcutCapture();
+  for (const b of tabs) b.classList.toggle('on', b.dataset.tab === name);
+  for (const p of panels) p.classList.toggle('on', p.dataset.tab === name);
+}
+const settingsTabs = [...document.querySelectorAll('#settings-tabs .set-tab')];
+const settingsPanels = [...document.querySelectorAll('#settings-dialog .set-panel')];
+for (const b of settingsTabs) b.onclick = () => pickTab(settingsTabs, settingsPanels, b.dataset.tab);
+const promptTabs = [...document.querySelectorAll('#set-prompt-tabs .set-subtab')];
+const promptPanels = [...document.querySelectorAll('#settings-dialog .set-prompt-panel')];
+for (const b of promptTabs) b.onclick = () => pickTab(promptTabs, promptPanels, b.dataset.tab);
+
+// ===== 설정창: 요약 프롬프트 =====
+// 저장 형태는 "빈 문자열 = 내장 기본값"이다(translate.agyModel이 ''이면 엔진 기본값인 것과 같은 관례).
+// 그런데 화면에는 기본값 원문을 채워 보여 준다 — 여러 줄짜리 긴 글이라 placeholder로는 보여줄 수
+// 없고, 빈 칸만 놓으면 무엇을 고치고 있는지 알 수 없기 때문이다.
+// 대신 저장할 때 기본값과 같으면 다시 ''로 되돌린다. 그러지 않으면 손대지도 않은 사용자에게
+// 지금의 기본 프롬프트가 통째로 복사돼 굳어, 나중에 기본 프롬프트를 개선해도 그 사용자만
+// 옛 문구를 계속 쓰게 된다.
+// 값의 상한·제어문자 제거는 렌더러가 아니라 paperSummary가 다시 한 번 건다(신뢰 경계는 main에 있다).
+let promptDefaults = null; // 정적 값이라 한 번만 읽어 캐시한다. 실패하면 null로 남아 다음 열기에 다시 시도한다.
+async function loadPromptDefaults() {
+  if (promptDefaults) return promptDefaults;
+  try {
+    promptDefaults = await window.wcompare.summary.promptDefaults();
+  } catch (e) {
+    console.warn('기본 요약 프롬프트 로드 실패(무시):', e?.message || e);
+  }
+  return promptDefaults;
+}
+const promptFields = [...document.querySelectorAll('#settings-dialog .set-prompt')];
+const promptDefaultOf = (key) => (promptDefaults && promptDefaults[key]) || '';
+function fillPromptFields(saved) {
+  for (const ta of promptFields) ta.value = saved?.[ta.dataset.key] || promptDefaultOf(ta.dataset.key);
+}
+// 하위 키 하나만 담은 patch로 보낸다 — settingsStore가 object 키를 하위 병합하므로 나머지 여섯 칸은 그대로 남는다.
+function savePrompt(key, value) {
+  window.wcompare.settings.set({ summaryPrompts: { [key]: value } })
+    .catch((e) => console.warn('요약 프롬프트 저장 실패(무시):', e?.message || e));
+}
+for (const ta of promptFields) {
+  // 저장 시점은 change(포커스를 잃을 때)다. input으로 걸면 글자 하나마다 디스크에 쓴다.
+  const save = () => {
+    const def = promptDefaultOf(ta.dataset.key);
+    // 공백만 남긴 칸도 ''로 정규화한다. main(sanitizePromptPart)은 공백을 "기본값 폴백"으로
+    // 판정하므로, 공백 원본을 그대로 저장하면 프롬프트는 기본값인데 다시 연 칸은 비어 보이는
+    // 불일치가 생긴다 — 사용자는 "지웠는데 왜 기본값이 붙지"와 "지워진 게 맞나"를 구분할 수 없다.
+    const v = ta.value;
+    savePrompt(ta.dataset.key, !v.trim() || v.trim() === def.trim() ? '' : v);
+  };
+  ta.onchange = save;
+  // change만으로는 blur 없이 끝나는 경로에서 편집분이 통째로 사라진다 — 커서를 칸에 둔 채
+  // ⌘Q/창 닫기를 하면 change가 영영 발화하지 않는 것을 실측으로 확인했다. input에 디바운스를
+  // 얹어 마지막 타자 후 잠시 뒤 저장한다: 타자마다 디스크에 쓰지 않으면서 종료 직전 편집도 남는다.
+  // save는 실행 시점의 화면 값을 읽으므로, '기본값' 버튼 클릭과 타이머가 엉켜도 마지막 저장은
+  // 항상 현재 보이는 값 기준이라 서로 덮어써도 결과가 같다(멱등).
+  let debounce = null;
+  ta.addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(save, 600);
+  });
+}
+for (const btn of document.querySelectorAll('#settings-dialog .set-prompt-reset')) {
+  btn.onclick = () => {
+    const ta = promptFields.find((t) => t.dataset.key === btn.dataset.key);
+    if (!ta) return;
+    ta.value = promptDefaultOf(btn.dataset.key);
+    savePrompt(btn.dataset.key, ''); // 화면은 기본값 원문, 저장은 '' — 위에 적은 관례 그대로
+  };
+}
 // 테마 선택은 고르는 즉시 반영·저장한다(체크박스들과 같은 즉시 적용 관용구).
 $('set-theme')?.addEventListener('change', (e) => setTheme(e.target.value));
 
@@ -1085,7 +1167,9 @@ function promptProjectName(suggest) {
 
 // 설정 모달 — 현재 값으로 채우고 띄운다. 체크박스는 change 시 즉시 반영(아래 wiring 참조).
 async function openSettings() {
-  const s = await window.wcompare.settings.get();
+  // 기본 프롬프트는 정적 값이라 한 번만 왕복한다. 그 한 번도 settings.get()과 나란히 기다려
+  // 설정창이 늦게 뜨지 않게 한다(둘 다 실패해도 각자 안에서 삼키므로 여기서 던지지 않는다).
+  const [s] = await Promise.all([window.wcompare.settings.get(), loadPromptDefaults()]);
   $('set-storage-path').value = s.storageDir;
   $('set-archive-pdf').checked = !!s.archivePdfOnOpen;
   $('set-keep-translations').checked = !!s.keepTranslationsInStorage;
@@ -1093,6 +1177,14 @@ async function openSettings() {
   if (s.ui?.theme) applyTheme(s.ui.theme); // select 선택 상태까지 함께 맞춘다
   renderAllShortcutRows();
   applyTranslateSettings(s.translate);
+  fillPromptFields(s.summaryPrompts); // 저장된 override가 없는 칸은 기본 프롬프트 원문으로 채운다
+  // 기본 프롬프트를 못 읽었으면(옛 preload 번들 등) 편집을 잠근다. 열어 두면 칸이 비어 보이고,
+  // 거기에 한 줄이라도 치면 def가 ''라서 그 한 줄이 공통 규칙 전체를 대체하는 override로 저장된다.
+  const promptsOk = !!promptDefaults;
+  for (const el of promptFields) el.disabled = !promptsOk;
+  for (const el of document.querySelectorAll('#settings-dialog .set-prompt-reset')) el.disabled = !promptsOk;
+  const perr = $('set-prompt-err');
+  if (perr) perr.style.display = promptsOk ? 'none' : '';
   $('set-agy-refresh-status').textContent = '';
   refreshPdfDefault(); // 비동기 — duti 실행을 기다리느라 설정창이 늦게 뜨지 않게
   $('settings-dialog').showModal();

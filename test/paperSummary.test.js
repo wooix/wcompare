@@ -7,8 +7,9 @@ const path = require('node:path');
 
 const {
   summarize, resolveEngineBin, buildSummaryArgs, clipText, buildPrompt, cleanResponse, extractMermaid,
-  keepTailLines,
-  KINDS, MAX_TEXT_CHARS, MAX_MERMAID_CHARS, MAX_STDERR_BUF_CHARS,
+  keepTailLines, sanitizePromptPart,
+  KINDS, PROMPT_DEFAULTS,
+  MAX_TEXT_CHARS, MAX_MERMAID_CHARS, MAX_STDERR_BUF_CHARS, MAX_PROMPT_PART_CHARS,
 } = require('../src/main/paperSummary.js');
 
 // transpaper.test.js:tmpExec와 같은 관용구 — 실제 LLM 대신 셸스크립트를 끼운다.
@@ -585,4 +586,203 @@ test('제어문자: 정화한 인자를 spawn이 실제로 받아들인다', () 
   assert.match(out, /본문 에 NUL 이 있다/);
   // 정화 전이라면 여기서 ERR_INVALID_ARG_VALUE가 났을 것이다
   assert.throws(() => execFileSync('/bin/echo', [`raw${NUL}`]), /null bytes|ERR_INVALID_ARG_VALUE/);
+});
+
+// ===== 프롬프트 override (설정창 '요약 프롬프트' 탭에서 사용자가 고친 문구) =====
+// 여기서 지키려는 계약은 둘이다.
+//   (1) 사용자가 고친 칸만 바뀌고, 나머지는 내장 기본값 그대로다.
+//   (2) 고쳐도 [논문 제목]/[목차]/[본문] 주입과 상한·정화는 코드가 계속 쥐고 있다.
+// (2)를 놓치면 설정창이 "무엇이든 프롬프트에 실을 수 있는 구멍"이 된다 — 본문과 같은 인자로
+// 나가므로 컨텍스트 한도를 넘겨 요약 세 개가 한꺼번에 죽는다.
+const PROMPT_KEYS = [
+  'common', 'overviewSpec', 'overviewTail', 'sectionsSpec', 'sectionsTail', 'flowSpec', 'flowTail',
+];
+const DOC = { title: '제목X', outline: '1. 서론\n2. 방법', text: '본문내용ABC' };
+
+test('PROMPT_DEFAULTS: 7칸이 모두 비어 있지 않은 문자열이고 실제 기본 프롬프트와 같다', () => {
+  assert.deepEqual(Object.keys(PROMPT_DEFAULTS).sort(), [...PROMPT_KEYS].sort(), '칸이 늘거나 줄면 설정창 UI와 어긋난다');
+  for (const key of PROMPT_KEYS) {
+    const v = PROMPT_DEFAULTS[key];
+    assert.equal(typeof v, 'string', `${key}: 문자열이어야 textarea에 그대로 실린다`);
+    assert.ok(v.trim().length > 0, `${key}: 비어 있으면 설정창이 빈 칸을 보여 준다`);
+  }
+  // 설정창은 이 문자열과 사용자의 입력을 비교해 "손대지 않았다"를 판정한다. 기본 프롬프트가
+  // 실제로 쓰이는 문구와 한 글자라도 다르면 그 판정이 영영 어긋난다.
+  const p = buildPrompt('overview', DOC);
+  assert.ok(p.startsWith(`${PROMPT_DEFAULTS.common}\n`), 'common이 프롬프트 맨 앞에 그대로 들어간다');
+  assert.ok(p.includes(`\n${PROMPT_DEFAULTS.overviewSpec}\n`), 'overviewSpec이 그대로 들어간다');
+  assert.ok(p.endsWith(PROMPT_DEFAULTS.overviewTail), 'overviewTail이 맨 뒤에 그대로 들어간다');
+  assert.ok(Object.isFrozen(PROMPT_DEFAULTS), 'IPC로 렌더러에 나가는 상수라 호출부가 고칠 수 없어야 한다');
+});
+
+test('buildPrompt override: 공통 규칙 칸이 기본값 대신 들어간다', () => {
+  for (const kind of KINDS) {
+    const p = buildPrompt(kind, DOC, { common: '내 공통 규칙 MINE' });
+    assert.ok(p.startsWith('내 공통 규칙 MINE\n'), `${kind}: override가 맨 앞에 온다`);
+    assert.ok(!p.includes('반드시 한국어로 답한다'), `${kind}: 기본 공통 규칙은 사라진다`);
+    // 공통만 고쳤으니 kind별 칸은 기본값 그대로여야 한다.
+    assert.ok(p.includes(PROMPT_DEFAULTS[`${kind}Spec`]), `${kind}: 지시문은 기본값 유지`);
+    assert.ok(p.endsWith(PROMPT_DEFAULTS[`${kind}Tail`]), `${kind}: 마무리는 기본값 유지`);
+  }
+});
+
+test('buildPrompt override: kind별 지시문·마무리 칸이 각각 교체된다', () => {
+  for (const kind of KINDS) {
+    const spec = buildPrompt(kind, DOC, { [`${kind}Spec`]: `내 지시문 ${kind}` });
+    assert.ok(spec.includes(`내 지시문 ${kind}`), `${kind}Spec: override가 실린다`);
+    assert.ok(!spec.includes(PROMPT_DEFAULTS[`${kind}Spec`]), `${kind}Spec: 기본 지시문은 사라진다`);
+    assert.ok(spec.startsWith(PROMPT_DEFAULTS.common), `${kind}Spec: 공통은 기본값 유지`);
+    assert.ok(spec.endsWith(PROMPT_DEFAULTS[`${kind}Tail`]), `${kind}Spec: 마무리는 기본값 유지`);
+
+    const tail = buildPrompt(kind, DOC, { [`${kind}Tail`]: `내 마무리 ${kind}` });
+    assert.ok(tail.endsWith(`내 마무리 ${kind}`), `${kind}Tail: override가 맨 뒤에 온다`);
+    assert.ok(!tail.includes(PROMPT_DEFAULTS[`${kind}Tail`]), `${kind}Tail: 기본 마무리는 사라진다`);
+    assert.ok(tail.includes(PROMPT_DEFAULTS[`${kind}Spec`]), `${kind}Tail: 지시문은 기본값 유지`);
+  }
+});
+
+test('buildPrompt override: 다른 kind의 칸은 서로 새어 나오지 않는다', () => {
+  // 7칸을 한 객체에 담아 두고 kind별로 자기 것만 골라 쓰는 구조라, 여기가 어긋나면
+  // Overview를 고쳤는데 흐름도 프롬프트가 바뀌는 사고가 난다.
+  const all = Object.fromEntries(PROMPT_KEYS.map((k) => [k, `MINE_${k}`]));
+  for (const kind of KINDS) {
+    const p = buildPrompt(kind, DOC, all);
+    assert.ok(p.includes(`MINE_${kind}Spec`) && p.includes(`MINE_${kind}Tail`), `${kind}: 자기 칸을 쓴다`);
+    for (const other of KINDS.filter((k) => k !== kind)) {
+      assert.ok(!p.includes(`MINE_${other}Spec`), `${kind}: ${other}Spec이 새어 나왔다`);
+      assert.ok(!p.includes(`MINE_${other}Tail`), `${kind}: ${other}Tail이 새어 나왔다`);
+    }
+  }
+  // 모르는 kind는 overview로 떨어지되, 그때도 overview 칸의 override를 쓴다.
+  // (KIND_SPEC[kind]를 그대로 읽으면 kind='constructor'가 Object.prototype의 것을 집어 온다.)
+  const fallback = buildPrompt('constructor', DOC, all);
+  assert.ok(fallback.includes('MINE_overviewSpec') && fallback.endsWith('MINE_overviewTail'));
+});
+
+test('buildPrompt override: 빈 값·공백만·문자열 아닌 값은 무시하고 기본값을 쓴다', () => {
+  // '' = "내장 기본값을 쓰라"가 저장 형태의 관례다(translate.agyModel과 같은 규칙).
+  // 설정 파일은 사용자가 손으로 고칠 수도, 손상될 수도 있으니 이상한 값도 조용히 기본값으로 떨어져야 한다.
+  const base = buildPrompt('overview', DOC);
+  const junk = ['', '   ', '\n\n', '\t \r\n ', null, undefined, 42, [], {}, true, () => 'x'];
+  for (const v of junk) {
+    const p = buildPrompt('overview', DOC, { common: v, overviewSpec: v, overviewTail: v });
+    assert.equal(p, base, `common/spec/tail=${JSON.stringify(String(v))}이면 기본 프롬프트 그대로여야 한다`);
+  }
+  // 제어문자만 있는 칸도 정화 뒤 빈 문자열이 되어 자동으로 기본값으로 돌아간다.
+  assert.equal(buildPrompt('overview', DOC, { common: `${NUL}${BEL}${DEL}` }), base);
+});
+
+test('buildPrompt override: prompts를 생략하면 예전과 완전히 같은 프롬프트다(하위호환)', () => {
+  // 기존 호출부는 buildPrompt(kind, doc) 2인자다. 3번째 인자를 더하면서 한 글자라도 달라지면
+  // 손대지 않은 사용자의 요약 품질이 조용히 바뀐다.
+  for (const kind of [...KINDS, 'nope']) {
+    const base = buildPrompt(kind, DOC);
+    for (const prompts of [undefined, null, {}, PROMPT_DEFAULTS, '문자열', 0, []]) {
+      assert.equal(buildPrompt(kind, DOC, prompts), base,
+        `${kind}: prompts=${JSON.stringify(String(prompts))}이면 2인자 호출과 같아야 한다`);
+    }
+  }
+  // 기존 테스트가 지키던 내용이 그대로인지 한 번 더 못박는다.
+  const p = buildPrompt('sections', DOC);
+  assert.ok(p.includes('반드시 한국어로 답한다') && p.includes("'## 제목' 헤딩"));
+  assert.ok(p.split('\n').includes('[목차]') && p.includes('본문내용ABC'));
+});
+
+// [P1] 이 파일이 앓았던 병이 그대로 재발할 수 있는 새 입구다: override는 설정 파일에서 오고,
+// 설정 파일에는 사용자가 PDF 본문을 복사해 붙여넣을 수 있다 — pdf.js가 흘려보낸 제어문자까지 함께.
+// NUL이 하나라도 argv에 남으면 spawn이 인자를 통째로 거부해(ERR_INVALID_ARG_VALUE)
+// Overview·절별·흐름도가 한꺼번에 실패한다(arXiv 2203.15556에서 실제로 터진 경로).
+test('buildPrompt override[P1]: 제어문자(NUL 포함)가 섞여도 제거된다', () => {
+  const p = buildPrompt('flow', DOC, {
+    common: `내 공통${NUL}규칙`,
+    flowSpec: `내 지시${BEL}문`,
+    flowTail: `내 마무리${DEL}지시`,
+  });
+  assert.ok(!p.includes(NUL), 'NUL이 남으면 spawn이 거부한다');
+  assert.ok(!p.includes(BEL));
+  assert.ok(!p.includes(DEL));
+  // 지우지 않고 공백으로 바꾼다 — 지우면 앞뒤 단어가 붙어 지시문의 뜻이 달라진다.
+  assert.ok(p.includes('내 공통 규칙') && p.includes('내 지시 문') && p.endsWith('내 마무리 지시'));
+  // 줄바꿈·탭은 문단 구조라 살아남고, CRLF는 개행으로 정규화된다(설정 파일을 윈도우 편집기로 손댄 경우).
+  const kept = buildPrompt('overview', { title: 't', text: 'B' }, { common: '가\r\n나\t다' });
+  assert.ok(kept.startsWith('가\n나\t다\n'), `CRLF 정규화 실패: ${JSON.stringify(kept.slice(0, 20))}`);
+});
+
+test('buildPrompt override[P1]: 정화한 프롬프트를 spawn이 실제로 받아들인다', () => {
+  // "제거됐다"가 아니라 "spawn이 통과시킨다"를 본다 — 원래 결함이 spawn에서 났기 때문이다.
+  const { execFileSync } = require('node:child_process');
+  const prompt = buildPrompt('overview', DOC, { common: `사용자${NUL}가 붙여넣은 규칙` });
+  const args = buildSummaryArgs('agy', prompt, {});
+  const out = execFileSync('/bin/echo', [args[1]], { encoding: 'utf8' });
+  assert.match(out, /사용자 가 붙여넣은 규칙/);
+  // 정화 전이라면 여기서 ERR_INVALID_ARG_VALUE가 났을 것이다(요약 세 개가 한꺼번에 실패한 그 경로).
+  assert.throws(() => execFileSync('/bin/echo', [`raw${NUL}`]), /null bytes|ERR_INVALID_ARG_VALUE/);
+});
+
+test('buildPrompt override: 상한(8000자)을 넘는 칸은 잘린다', () => {
+  const over = '가'.repeat(MAX_PROMPT_PART_CHARS + 500);
+  const p = buildPrompt('overview', { title: 'T', text: 'BODY' }, { common: over });
+  assert.ok(p.includes('가'.repeat(MAX_PROMPT_PART_CHARS)), '상한까지는 그대로 실린다');
+  assert.ok(!p.includes('가'.repeat(MAX_PROMPT_PART_CHARS + 1)), `상한을 넘겨 실렸다`);
+  // 세 칸을 모두 최대로 채워도 프롬프트가 칸 상한 × 3 + 본문 수준을 넘지 않는다.
+  const big = buildPrompt('sections', { title: 'T', text: 'BODY' }, {
+    common: over, sectionsSpec: over, sectionsTail: over,
+  });
+  assert.ok(big.length < 3 * MAX_PROMPT_PART_CHARS + 1000, `프롬프트가 부풀었다: ${big.length}자`);
+});
+
+test('buildPrompt override: override를 넣어도 [본문] 주입과 12만자 상한은 코드가 쥐고 있다', () => {
+  // 사용자가 프롬프트를 어떻게 고치든 본문이 통째로 실리는 사고는 없어야 한다.
+  const p = buildPrompt('sections', {
+    title: `제${NUL}목`, outline: '1. 서론', text: 'x'.repeat(MAX_TEXT_CHARS + 5000),
+  }, { common: '가'.repeat(MAX_PROMPT_PART_CHARS + 500), sectionsSpec: '내 지시', sectionsTail: '내 마무리' });
+
+  const lines = p.split('\n');
+  assert.ok(lines.includes('[논문 제목]'), '제목 절은 코드가 붙인다');
+  assert.ok(lines.includes('[목차]'), '목차 절은 코드가 붙인다');
+  assert.ok(lines.includes('[본문]'), '본문 절은 코드가 붙인다');
+  assert.ok(p.includes('본문 중간 생략'), '본문 상한은 그대로 살아 있다');
+  assert.ok(!p.includes(NUL), '제목 정화도 그대로 살아 있다');
+  assert.ok(p.endsWith('내 마무리'), '본문 뒤 마무리 지시 자리도 그대로다');
+  // 본문 상한(12만) + 칸 상한(8000×3)을 넘지 않는다.
+  assert.ok(p.length < MAX_TEXT_CHARS + 3 * MAX_PROMPT_PART_CHARS + 1000, `프롬프트가 부풀었다: ${p.length}자`);
+});
+
+test('sanitizePromptPart: 정화 결과 ""는 "기본값을 쓰라"는 뜻이다', () => {
+  // 채택 규칙(빈 값이면 기본값)이 이 함수의 반환값 하나에 걸려 있어 따로 못박는다.
+  for (const v of ['', '   ', '\n\t ', `${NUL}${BEL}`, null, undefined, 42, {}, ['a'], true]) {
+    assert.equal(sanitizePromptPart(v), '', `${JSON.stringify(String(v))}는 ''로 떨어져야 한다`);
+  }
+  assert.equal(sanitizePromptPart('  가\r\n나  '), '가\n나', '앞뒤 공백 제거 + CRLF 정규화');
+  assert.equal(sanitizePromptPart(`가${NUL}나`), '가 나', '제어문자는 공백으로');
+  assert.equal(sanitizePromptPart('가'.repeat(MAX_PROMPT_PART_CHARS + 1)).length, MAX_PROMPT_PART_CHARS);
+  assert.equal(sanitizePromptPart('가'.repeat(MAX_PROMPT_PART_CHARS)).length, MAX_PROMPT_PART_CHARS,
+    '상한과 같은 길이는 자르지 않는다');
+});
+
+test('summarize: opts.summaryPrompts가 실제 -p 프롬프트에 실린다', async () => {
+  // buildPrompt까지만 보면 배선이 끊겨도 초록불이 켜진다. 실제 argv로 나가는 값을 되돌려 받아 확인한다.
+  const { p: bin } = tmpExec('agy', '#!/bin/sh\n[ "$1" = "-p" ] || exit 3\nprintf \'%s\' "$2"\n');
+  const job = summarize('sections', { title: '제목X', outline: '1. 서론', text: '본문Y' }, {
+    env: { WCOMPARE_AGY: bin, PATH: '' },
+    // NUL을 일부러 섞는다: 정화가 빠지면 spawn이 ERR_INVALID_ARG_VALUE로 여기서 터진다.
+    summaryPrompts: { common: `내 공통${NUL}규칙`, sectionsSpec: '내 절별 지시', sectionsTail: '내 마무리 지시' },
+  });
+  const { content } = await job.promise;
+  assert.ok(content.startsWith('내 공통 규칙\n'), `override가 프롬프트에 실리지 않았다: ${content.slice(0, 40)}`);
+  assert.ok(content.includes('내 절별 지시') && content.endsWith('내 마무리 지시'));
+  assert.ok(!content.includes('반드시 한국어로 답한다'), '기본 공통 규칙은 대체됐다');
+  assert.ok(content.includes('본문Y') && content.includes('[목차]'), '본문·목차 주입은 코드가 계속 쥐고 있다');
+});
+
+test('summarize: summaryPrompts를 주지 않으면 기본 프롬프트가 나간다(하위호환)', async () => {
+  const { p: bin } = tmpExec('agy', '#!/bin/sh\nprintf \'%s\' "$2"\n');
+  const mk = (opts) => summarize('overview', { title: 'T', text: '본문Y' }, {
+    env: { WCOMPARE_AGY: bin, PATH: '' }, ...opts,
+  }).promise;
+  const base = (await mk({})).content;
+  assert.equal(base, buildPrompt('overview', { title: 'T', outline: undefined, text: '본문Y' }));
+  for (const summaryPrompts of [undefined, {}, { common: '   ' }]) {
+    assert.equal((await mk({ summaryPrompts })).content, base, `summaryPrompts=${JSON.stringify(summaryPrompts)}`);
+  }
 });
