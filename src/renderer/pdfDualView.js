@@ -96,7 +96,12 @@ export function createDualView(hostEl) {
   const panes = {};
   const busy = {};
   const marks = {};
-  const outlines = {};
+  // 목차(TOC)는 pane 안이 아니라 #pdfview의 첫 열이다 — 화면은 [TOC | 뷰어1 | 뷰어2 | 요약] 4열.
+  // 예전에는 pane마다 하나씩 두었는데, 그러면 목차를 연 쪽 뷰어만 200px 좁아져 두 문서를 나란히
+  // 대조할 때 같은 페이지가 서로 다른 배율로 보였다. 밖으로 빼면 두 pane이 언제나 같은 폭이 된다.
+  const outlineEl = document.createElement('div');
+  outlineEl.className = 'pdf-outline';
+  hostEl.appendChild(outlineEl);
   // 두 pane을 감싸는 열. 요약 패널이 #pdfview의 형제로 들어와도 `.pdf-pane:last-child`
   // (= 오른쪽 pane을 가려내는 선택자)가 깨지지 않도록 격리하는 것이 목적이다.
   const panesWrap = document.createElement('div');
@@ -114,12 +119,6 @@ export function createDualView(hostEl) {
     pane.dataset.side = side;
     panesWrap.appendChild(pane);
     panes[side] = pane;
-    // 목차 드로어는 뷰어를 "겹치지 않고" flex 2열로 밀어낸다 — 겹치면 page-width 페이지의
-    // 왼쪽이 가려지므로, 열고 닫을 때 applyFit으로 폭을 다시 계산한다.
-    const outline = document.createElement('div');
-    outline.className = 'pdf-outline';
-    pane.appendChild(outline);
-    outlines[side] = outline;
     const viewerHost = document.createElement('div');
     viewerHost.className = 'pdf-viewer-host';
     pane.appendChild(viewerHost);
@@ -308,7 +307,7 @@ export function createDualView(hostEl) {
     // fit이 꺼져 있으면 반대편이 쓰던 배율에 맞춘다 (자기 배율을 읽으면 방금 적용된 page-width가 나온다).
     if (fitWidth) applyFit();
     else if (loaded[other(side)]) viewers[side].setScale(viewers[other(side)].getScale());
-    if (outlineOpen) { panes[side].classList.add('outline-open'); refreshOutline(side); }
+    if (outlineOpen && side === TOC_SIDE) { hostEl.classList.add('outline-open'); refreshOutline(); }
     refind();
     emit();
   }
@@ -398,7 +397,8 @@ export function createDualView(hostEl) {
     loaded[side] = false;
     marks[side].setDoc(null);
     panes[side].classList.remove('loaded');
-    panes[side].classList.remove('outline-open');
+    // 목차는 TOC_SIDE 문서의 것이다 — 그 문서를 닫으면 보여줄 목차가 없다(반대편을 닫는 것은 무관).
+    if (side === TOC_SIDE) hostEl.classList.remove('outline-open');
     hist.back.length = 0; // 히스토리 위치는 문서 기준이라 무효 (switch와 동일)
     hist.fwd.length = 0;
     urlPanels[side]?.reset(); // 다시 드러나는 URL 패널에 지난 오류가 남지 않게
@@ -446,10 +446,10 @@ export function createDualView(hostEl) {
     hist.back.length = 0; // 문서가 바뀌었으므로 링크 히스토리는 무효
     hist.fwd.length = 0;
     if (outlineOpen) {
-      for (const s of SIDES) {
-        panes[s].classList.toggle('outline-open', loaded[s]);
-        if (loaded[s]) refreshOutline(s); // 목차도 문서를 따라간다
-      }
+      // 좌우를 바꾸면 TOC_SIDE에 놓인 문서가 달라진다 → 목차도 새 문서의 것으로 갈아 끼운다.
+      const show = loaded[TOC_SIDE];
+      hostEl.classList.toggle('outline-open', show);
+      if (show) refreshOutline();
     }
     refind();
     realign();
@@ -550,19 +550,27 @@ export function createDualView(hostEl) {
   }
 
   // ===== 목차 (TOC) =====
-  async function refreshOutline(side) {
-    const el = outlines[side];
-    el.replaceChildren();
+  // 목차는 하나뿐이고 언제나 TOC_SIDE 문서의 것이다. 항목을 누르면 그 문서로 이동하므로
+  // renderOutlineItems에도 같은 side를 넘긴다 — 여기서 side가 갈리면 "왼쪽 목차를 눌렀는데
+  // 오른쪽이 움직이는" 어긋남이 난다.
+  // await 사이에 문서가 바뀔 수 있어 세대 토큰으로 낡은 결과를 버린다(뒤늦게 도착한 옛 문서의
+  // 목차가 새 문서 위에 그려지는 것을 막는다).
+  let outlineToken = 0;
+  async function refreshOutline() {
+    const token = ++outlineToken;
+    const side = TOC_SIDE;
+    outlineEl.replaceChildren();
     let items = null;
     try { items = await viewers[side].getOutline(); } catch { /* 목차 없음으로 취급 */ }
+    if (token !== outlineToken) return; // 기다리는 사이에 문서가 바뀌었다
     if (!items?.length) {
       const d = document.createElement('div');
       d.className = 'toc-empty';
       d.textContent = '(목차 없음)';
-      el.appendChild(d);
+      outlineEl.appendChild(d);
       return;
     }
-    el.appendChild(renderOutlineItems(items, side));
+    outlineEl.appendChild(renderOutlineItems(items, side));
   }
 
   function renderOutlineItems(items, side) {
@@ -600,14 +608,18 @@ export function createDualView(hostEl) {
     return frag;
   }
 
+  // 목차는 어느 쪽 문서의 것을 보여줄지 하나로 정한다(diff 모드의 md TOC와 같은 규칙).
+  // 오른쪽은 대조 대상일 뿐 순서대로 읽어 내려가는 문서가 아니다.
+  // TOC_SIDE로 이름을 붙여 두는 이유: 네 곳(setOutline/문서 로드/문서 닫기/좌우 교체)이 같은
+  // 판단을 되풀이하는데, 한 곳만 고치면 "열었는데 문서를 바꾸니 어긋나는" 상태가 생긴다.
+  const TOC_SIDE = 'left';
+
   function setOutline(on) {
     outlineOpen = !!on;
-    for (const side of SIDES) {
-      const show = outlineOpen && loaded[side];
-      panes[side].classList.toggle('outline-open', show);
-      if (show) refreshOutline(side);
-    }
-    if (fitWidth) applyFit(); // 드로어가 pane 폭을 바꾼다 → page-width 재계산
+    const show = outlineOpen && loaded[TOC_SIDE];
+    hostEl.classList.toggle('outline-open', show);
+    if (show) refreshOutline();
+    if (fitWidth) applyFit(); // 드로어가 뷰어 폭을 바꾼다 → page-width 재계산
     emit();
   }
   // 프로젝트 저장/복원용 — side 기준으로 주고받는다(경로 해석 결과가 달라도 안전).
@@ -660,6 +672,9 @@ export function createDualView(hostEl) {
     getOutlineOf: (side) => viewers[side].getOutline(),
     destToPage: (side, dest) => viewers[side].destToPage(dest),
     setPaneVisible,
+    // 바깥에서 열 폭을 바꿨을 때(요약 스플리터 드래그) 페이지 배율을 다시 맞춘다.
+    // fit이 꺼져 있으면 사용자가 고른 배율을 지켜야 하므로 아무것도 하지 않는다.
+    relayout: () => { if (fitWidth) applyFit(); },
     setBusy: (side, state) => busy[side](state),
     onState: (cb) => stateCbs.push(cb),
     isSync: () => syncEnabled,

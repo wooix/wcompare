@@ -38,17 +38,25 @@ const setStorage = (app, dir) => app.evaluate((_electron, d) => {
 // 가짜 agy: `agy -p <프롬프트>` 계약만 흉내 낸다. 프롬프트 안의 [할 일] 문구로 종류를 가른다
 // (paperSummary.KIND_SPEC이 kind마다 다른 문장을 넣으므로 이걸로 충분히 구분된다).
 // delays로 각 종류의 응답 지연을 조절해 "생성 중 레이아웃 전환" 같은 경쟁 상황을 재현한다.
-function stubAgy(dir, delays = { overview: 0, sections: 0, flow: 0 }) {
+// logFile을 주면 판정한 kind를 한 줄씩 append한다 — "몇 번 불렸는지"와 "어느 kind로 불렸는지"를
+// 프롬프트 매칭 결과 그대로 증거로 남겨, 재생성이 활성 탭 하나만 건드렸는지 검증할 수 있게 한다.
+function stubAgy(dir, delays = { overview: 0, sections: 0, flow: 0 }, logFile) {
   const p = path.join(dir, 'agy');
   fs.writeFileSync(p, [
     '#!/bin/sh',
     'prompt="$2"',
     'case "$prompt" in',
-    '  *"흐름도를 mermaid"*)',
+    '  *"흐름도를 mermaid"*) kind=flow ;;',
+    '  *"절 단위로 나누어"*) kind=sections ;;',
+    '  *) kind=overview ;;',
+    'esac',
+    logFile ? `echo "$kind" >> "${logFile}"` : ':',
+    'case "$kind" in',
+    '  flow)',
     `    sleep ${delays.flow}`,
     "    printf '```mermaid\\nflowchart TD\\n  A[\"문제 제기\"] --> B[\"핵심 아이디어\"]\\n  B --> C[\"실험 결과\"]\\n```\\n'",
     '    ;;',
-    '  *"절 단위로 나누어"*)',
+    '  sections)',
     `    sleep ${delays.sections}`,
     "    printf '## 1. 서론\\n첫째 절 요약 본문.\\n\\n## 2. 제안 방법\\n둘째 절 요약 본문.\\n'",
     '    ;;',
@@ -67,8 +75,13 @@ function setup(tag, delays) {
   const b = path.join(dir, 'paper.ko.pdf');
   fs.writeFileSync(a, makePdf(4, { height: 900, lines: 6 }));
   fs.writeFileSync(b, makePdf(4, { height: 900, lines: 6 }));
-  return { dir, a, b, storageDir: path.join(dir, 'storage'), agy: stubAgy(dir, delays) };
+  const log = path.join(dir, 'agy-calls.log');
+  return { dir, a, b, storageDir: path.join(dir, 'storage'), agy: stubAgy(dir, delays, log), log };
 }
+
+// agy 호출 로그를 kind 배열로 읽는다 — pdf-reuse.spec.js의 runCount와 같은 관용구(파일 존재로 세지 않고
+// 실행 횟수 자체를 증거로 삼는다).
+const callLog = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8').trim().split('\n').filter(Boolean) : []);
 
 // 두 PDF를 열고 PDF 모드에 들어간 상태까지 만든다.
 async function launch(env, args, storageDir) {
@@ -143,6 +156,59 @@ test('요약 생성: 세 탭이 채워지고 흐름도는 mermaid SVG로 그려�
   expect(await svg.evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(10);
   // 렌더 실패 경로(원본 코드 노출)로 새지 않았다
   await expect(win.locator(`${S} .sum-code`)).toHaveCount(0);
+
+  await app.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('재생성: 활성 탭 하나만 다시 만들고 나머지 탭의 캐시는 보존된다', async () => {
+  const { dir, a, storageDir, agy, log } = setup('regen-only');
+  const { app, win } = await launch(
+    { ...process.env, WCOMPARE_AGY: agy }, [a], storageDir);
+
+  await win.click('#btn-layout-summary');
+  await win.click(`${S} .sum-empty-go`);
+
+  // 최초 생성: 세 탭 모두 채워질 때까지 기다린다("다시 생성" 버튼이 풀리면 완료).
+  await expect(win.locator(`${S} .sum-pane[data-kind=overview]`))
+    .toContainText('한 줄짜리 개요 본문', { timeout: 25000 });
+  await expect(win.locator(`${S} .sum-regen`)).toBeEnabled({ timeout: 25000 });
+  // 최초 생성은 3종 전부 — 로그에 overview/sections/flow 순서로 세 줄이 남는다.
+  expect(callLog(log)).toEqual(['overview', 'sections', 'flow']);
+
+  const cacheDir = path.join(storageDir, 'summaries');
+  // 저장은 finally에서 await 없이 던져진다 — 버튼이 풀린 시점에 파일이 아직 없을 수 있으므로
+  // 파일이 나타날 때까지 기다린 뒤 읽는다(아래 캐시 복원 테스트와 같은 관용구).
+  await expect.poll(() => { try { return fs.readdirSync(cacheDir).length; } catch { return 0; } },
+    { timeout: 10000 }).toBeGreaterThan(0);
+  const cacheFile = () => path.join(cacheDir, fs.readdirSync(cacheDir)[0]);
+  const readCache = () => JSON.parse(fs.readFileSync(cacheFile(), 'utf8'));
+  const before = readCache();
+  const mtimeBefore = fs.statSync(cacheFile()).mtimeMs;
+  expect(before.parts.overview).toContain('한 줄짜리 개요 본문');
+  expect(before.parts.sections).toContain('제안 방법');
+  expect(before.parts.flow).toContain('flowchart TD');
+
+  // 흐름도 탭으로 옮긴 뒤 "다시 생성" — 지금 보고 있는 탭(흐름도) 하나만 다시 만들어야 한다.
+  await win.click(`${S} .sum-tab[data-kind=flow]`);
+  await win.click(`${S} .sum-regen`);
+  await expect(win.locator(`${S} .sum-regen`)).toBeEnabled({ timeout: 25000 });
+
+  // 가짜 CLI 호출이 정확히 1회만 늘었고, 그 kind는 flow다(KIND_SPEC 문구로 프롬프트에서 구분됨).
+  const lines = callLog(log);
+  expect(lines.length).toBe(4);
+  expect(lines[3]).toBe('flow');
+
+  // 재생성의 저장도 fire-and-forget이다. 가짜 CLI가 매번 같은 내용을 돌려줘 내용 비교로는 저장
+  // 완료를 알 수 없으니 파일 mtime이 커질 때까지 기다린다 — 이게 없으면 저장 전의 옛 파일을
+  // 읽고도 아래 세 단언이 공허하게 통과해, 캐시 보존이 깨져도 테스트가 초록으로 남는다.
+  await expect.poll(() => fs.statSync(cacheFile()).mtimeMs, { timeout: 10000 })
+    .toBeGreaterThan(mtimeBefore);
+  // overview/sections 캐시는 재생성 전과 완전히 같다 — 흐름도만 재생성했다고 나머지가 날아가지 않았다.
+  const after = readCache();
+  expect(after.parts.overview).toBe(before.parts.overview);
+  expect(after.parts.sections).toBe(before.parts.sections);
+  expect(after.parts.flow).toContain('flowchart TD');
 
   await app.close();
   fs.rmSync(dir, { recursive: true, force: true });
@@ -400,6 +466,145 @@ test('요약 뷰어 글씨 크기: A+ / A− / ↺ 가 본문과 제목을 함�
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// 절별 요약에 h1/h2/h3를 섞어 주는 가짜 agy — 요약 TOC의 depth 필터를 시험하려면 깊이가 필요하다
+// (기본 stubAgy는 h2만 두 개라 depth를 바꿔도 항목 수가 변하지 않는다).
+// 절마다 긴 filler를 넣는 이유: 목차 항목을 눌렀을 때 실제로 스크롤이 일어나야 검증이 성립한다.
+function stubAgyDeep(dir) {
+  const p = path.join(dir, 'agy');
+  const say = (body) => ["cat <<'WCEOF'", body, 'WCEOF'].join('\n');
+  const filler = Array(40).fill('본문을 채우는 줄.').join('\n\n');
+  fs.writeFileSync(p, [
+    '#!/bin/sh',
+    'prompt="$2"',
+    'case "$prompt" in',
+    '  *"흐름도를 mermaid"*)',
+    say('```mermaid\nflowchart TD\n  A["문제"] --> B["해법"]\n```'),
+    '    ;;',
+    '  *"절 단위로 나누어"*)',
+    say(['# 논문 전체', filler, '## 1. 서론', filler, '### 1.1 배경', filler, '## 2. 제안 방법', filler].join('\n\n')),
+    '    ;;',
+    '  *)',
+    say('**개요**\n한 줄짜리 개요 본문.'),
+    '    ;;',
+    'esac',
+  ].join('\n'), { mode: 0o755 });
+  return p;
+}
+
+test('요약 TOC: 절별 요약 탭에서만 보이고 depth로 항목 수가 달라진다', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-sum-toc-'));
+  const a = path.join(dir, 'paper.pdf');
+  fs.writeFileSync(a, makePdf(4, { height: 900, lines: 6 }));
+  const { app, win } = await launch(
+    { ...process.env, WCOMPARE_AGY: stubAgyDeep(dir) }, [a], path.join(dir, 'storage'));
+
+  await win.click('#btn-layout-summary');
+  await win.click(`${S} .sum-empty-go`);
+  await expect(win.locator(`${S} .sum-regen`)).toBeEnabled({ timeout: 25000 });
+
+  const toc = win.locator(`${S} .sum-toc`);
+  // 생성이 끝나면 Overview 탭이 선택돼 있다 — 그 탭에서는 목차가 폭을 잡아먹지 않아야 한다.
+  await expect(toc).toBeHidden();
+  await win.click(`${S} .sum-tab[data-kind=flow]`);
+  await expect(toc).toBeHidden();
+
+  await win.click(`${S} .sum-tab[data-kind=sections]`);
+  await expect(toc).toBeVisible();
+
+  // depth는 localStorage에 남아 spec 사이로 새므로, 기본값에 기대지 않고 매번 눌러서 정한다.
+  const items = win.locator(`${S} .sum-toc .toc-item`);
+  const depthBtn = (n) => win.locator(`${S} .toc-depth-btn`).nth(n - 1);
+  await depthBtn(3).click();
+  await expect(items).toHaveCount(4); // h1 + h2 + h3 + h2
+  await depthBtn(1).click();
+  await expect(items).toHaveCount(1); // h1 하나만
+  await depthBtn(2).click();
+  await expect(items).toHaveCount(3); // h1 + h2 둘
+  await expect(depthBtn(2)).toHaveClass(/on/);
+
+  // 항목을 누르면 렌더된 본문의 그 헤딩으로 스크롤한다(제목 문자열이 아니라 순번으로 찾는다).
+  await win.locator(`${S} .sum-toc .toc-item`, { hasText: '제안 방법' }).click();
+  await expect.poll(() => win.evaluate(() => document.querySelector('.sum-body').scrollTop),
+    { timeout: 5000 }).toBeGreaterThan(0);
+
+  // 좁은 폭 회귀: 탭바·동작 버튼 줄이 한 줄에 안 들어가면 flex가 아니라 넘침으로 나타나
+  // (버튼의 min-width가 auto라 줄지 않는다) 라벨이 잘려 보인다 — 여기서 그걸 숫자로 잡는다.
+  // 목차가 본문을 지나치게 밀어내는 것도 함께 본다.
+  // 폭을 만드는 방법이 바뀌었다: 예전에는 CSS clamp(300px,30%,560px)라 창만 줄이면 하한까지
+  // 따라 내려갔는데, 이제 폭은 사용자 값(paneSplit)이라 창을 줄여도 저장된 폭을 지킨다.
+  // 대신 창을 clamp의 상한 아래로 내리면 paneSplit이 resize에서 폭을 다시 조인다 —
+  // 620px 창이면 뷰어 몫(MIN_REST=360)을 빼고 260px만 남아 패널이 최소치 근처로 밀린다.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(620, 700));
+  await expect.poll(() => win.evaluate(() => document.querySelector('.pdf-summary').clientWidth),
+    { timeout: 5000 }).toBeLessThan(320);
+  const fit = await win.evaluate(() => {
+    const panel = document.querySelector('.pdf-summary');
+    const w = (sel) => { const e = panel.querySelector(sel); return [e.scrollWidth, e.clientWidth]; };
+    return { tabs: w('.sum-tabs'), acts: w('.sum-acts'), body: w('.sum-body'), panel: panel.clientWidth };
+  });
+  expect(fit.tabs[0]).toBeLessThanOrEqual(fit.tabs[1]);
+  expect(fit.acts[0]).toBeLessThanOrEqual(fit.acts[1]);
+  expect(fit.body[1]).toBeGreaterThan(fit.panel * 0.55); // 목차가 본문을 절반 이하로 밀어내지 않는다
+
+  await app.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('요약 내보내기: 복사는 클립보드에, 저장은 고른 경로에 마크다운을 남긴다', async () => {
+  const { dir, a, storageDir, agy } = setup('export');
+  const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a], storageDir);
+
+  await win.click('#btn-layout-summary');
+  // 내용이 없을 때는 동작 버튼 줄 자체가 없다 — 빈 요약에 대고 복사·저장할 것이 없다.
+  await expect(win.locator(`${S} .sum-copy`)).toBeHidden();
+  await win.click(`${S} .sum-empty-go`);
+  await expect(win.locator(`${S} .sum-regen`)).toBeEnabled({ timeout: 25000 });
+
+  // 앞선 값이 남아 공허하게 통과하지 않도록 클립보드를 먼저 다른 값으로 덮는다.
+  await app.evaluate(({ clipboard }) => clipboard.writeText('__wc-not-copied-yet__'));
+  await win.click(`${S} .sum-copy`);
+  await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()), { timeout: 10000 })
+    .toContain('한 줄짜리 개요 본문');
+  const copied = await app.evaluate(({ clipboard }) => clipboard.readText());
+  expect(copied).toContain('## Overview');
+  expect(copied).toContain('## 절별 요약');
+  expect(copied).toContain('제안 방법');
+  // 흐름도는 반드시 mermaid 펜스로 감싸 나간다(안 감싸면 GitHub/Obsidian에서 날 것 코드로 보인다).
+  expect(copied).toContain('```mermaid');
+  expect(copied).toContain('flowchart TD');
+  // 응답에 이미 있던 펜스를 벗기지 않으면 펜스가 두 겹이 되어 그림이 아니라 코드블록이 된다.
+  expect(copied).not.toContain('```mermaid\n```');
+
+  // 저장: 실제 showSaveDialog를 띄우면 e2e가 그 자리에서 멈춘다 → main에서 가로채
+  // "사용자가 이 경로를 골랐다"만 흉내 낸다(위 캐시 테스트의 showOpenDialog 대체와 같은 관용구).
+  const out = path.join(dir, 'saved-summary.md');
+  await app.evaluate(({ dialog }, p) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: p });
+  }, out);
+  await win.click(`${S} .sum-save`);
+  await expect.poll(() => fs.existsSync(out), { timeout: 10000 }).toBe(true);
+  const saved = fs.readFileSync(out, 'utf8');
+  expect(saved).toContain('## 절별 요약');
+  expect(saved).toContain('flowchart TD');
+  expect(saved).toBe(copied); // 복사와 저장은 main의 같은 조립기를 거친다 — 두 경로가 갈리면 안 된다
+
+  // 취소는 조용해야 한다 — 오류 줄이 뜨면 사용자는 저장이 실패한 줄 안다.
+  // 클릭 직후에 오류 줄만 보면 안 된다: .sum-err는 클릭 전부터 이미 숨김이라 toBeHidden()이
+  // 첫 검사에서 즉시 통과해, IPC 왕복이 끝나기도 전에 초록이 된다. 그러면 취소 시 throw하도록
+  // 회귀해도(=사용자에게 빨간 오류가 뜨는 진짜 버그) 이 테스트는 계속 통과한다.
+  // 버튼은 클릭 순간 동기적으로 잠기므로(run()의 setLocked), 다시 풀릴 때까지 기다리면
+  // 왕복이 끝난 뒤를 관측하게 된다.
+  await app.evaluate(({ dialog }) => { dialog.showSaveDialog = async () => ({ canceled: true }); });
+  const before = fs.readFileSync(out, 'utf8');
+  await win.click(`${S} .sum-save`);
+  await expect(win.locator(`${S} .sum-save`)).toBeEnabled({ timeout: 10000 });
+  await expect(win.locator(`${S} > .sum-err`)).toBeHidden();
+  expect(fs.readFileSync(out, 'utf8')).toBe(before); // 취소했는데 파일이 다시 쓰이지도 않았다
+
+  await app.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('회귀: 라이트 테마에서 흐름도의 글씨가 배경에 묻히지 않는다', async () => {
   // mermaid는 색을 CSS가 아니라 렌더 시점에 SVG 안에 구워 넣는다. 테마를 안 따라가면
   // 라이트 UI 위에 다크 그림이 얹혀 상자는 투명하고 글씨는 밝은 회색이 되어 안 보인다(사용자 신고).
@@ -454,6 +659,81 @@ test('회귀: 라이트 테마에서 흐름도의 글씨가 배경에 묻히지 
   await win.selectOption('#set-theme', 'dark');
   await win.evaluate(() => document.getElementById('settings-dialog').close());
   await expect.poll(contrast, { timeout: 15000 }).toBeGreaterThan(4.5);
+
+  await app.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('요약 TOC 접기: 접으면 목록이 숨고 손잡이는 남아 다시 펼 수 있다', async () => {
+  // 이 기능의 가장 쉬운 함정은 "접었더니 통째로 사라져 되돌릴 수 없는 것"이다. 접힘 상태가
+  // localStorage에 굳으므로 앱을 껐다 켜도 그대로다 → 손잡이가 남는지를 회귀로 못 박는다.
+  const { dir, a, storageDir, agy } = setup('tocfold');
+  const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a], storageDir);
+
+  await win.click('#btn-layout-summary');
+  await win.click(`${S} .sum-empty-go`);
+  await expect(win.locator(`${S} .sum-regen`)).toBeEnabled({ timeout: 25000 });
+  await win.click(`${S} .sum-tab[data-kind=sections]`);
+
+  const toc = win.locator(`${S} .sum-toc`);
+  const fold = win.locator(`${S} .toc-fold`);
+  await expect(toc).toBeVisible();
+  await expect(win.locator(`${S} .sum-toc .toc-item`).first()).toBeVisible();
+  const wide = (await toc.boundingBox()).width;
+
+  await fold.click(); // 접기
+  await expect(toc).toHaveClass(/collapsed/);
+  await expect(win.locator(`${S} .sum-toc .toc-depth-body`)).toBeHidden();
+  await expect(fold).toBeVisible(); // 되돌릴 수단이 반드시 남는다
+  expect((await toc.boundingBox()).width).toBeLessThan(wide);
+
+  await fold.click(); // 다시 펼치기
+  await expect(toc).not.toHaveClass(/collapsed/);
+  await expect(win.locator(`${S} .sum-toc .toc-item`).first()).toBeVisible();
+
+  // 접힘은 탭 전환에 씻겨 나가지 않는다 — 두 상태가 별개 축이라는 것의 실제 확인.
+  await fold.click();
+  await win.click(`${S} .sum-tab[data-kind=overview]`);
+  await win.click(`${S} .sum-tab[data-kind=sections]`);
+  await expect(toc).toHaveClass(/collapsed/);
+
+  await app.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('요약 폭 조절: 스플리터를 끌면 폭이 바뀌고 어느 쪽도 0px가 되지 않는다', async () => {
+  // 불변식: 뷰어가 0이면 pdf.js page-width가 0으로 나눈 값을 받고, 요약이 0이면 mermaid가
+  // 빈 그림을 그린다. 끝까지 끌어도 두 쪽이 모두 살아 있어야 한다.
+  const { dir, a, b, storageDir, agy } = setup('split');
+  const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a, b], storageDir);
+  await win.click('#btn-layout-full');
+
+  const split = win.locator('.pane-split');
+  await expect(split).toBeVisible();
+  const box = await split.boundingBox();
+  const sumW = async () => (await win.locator(S).boundingBox()).width;
+  const before = await sumW();
+
+  // 왼쪽으로 200px 끌면 요약이 그만큼 넓어진다.
+  await win.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await win.mouse.down();
+  await win.mouse.move(box.x - 200, box.y + box.height / 2, { steps: 8 });
+  await win.mouse.up();
+  await expect.poll(sumW, { timeout: 5000 }).toBeGreaterThan(before + 100);
+
+  // 오른쪽 끝까지 끌어도 요약이 사라지지 않는다(최소 폭에서 멈춘다).
+  const b2 = await split.boundingBox();
+  await win.mouse.move(b2.x + b2.width / 2, b2.y + b2.height / 2);
+  await win.mouse.down();
+  await win.mouse.move(b2.x + 5000, b2.y + b2.height / 2, { steps: 8 });
+  await win.mouse.up();
+  await expect.poll(sumW, { timeout: 5000 }).toBeGreaterThan(0);
+  // 뷰어도 살아 있다.
+  expect((await win.locator(L).boundingBox()).width).toBeGreaterThan(0);
+
+  // 대조형에서는 요약이 숨으므로 손잡이도 함께 숨어야 한다(허공에 손잡이가 남으면 안 된다).
+  await win.click('#btn-layout-compare');
+  await expect(split).toBeHidden();
 
   await app.close();
   fs.rmSync(dir, { recursive: true, force: true });

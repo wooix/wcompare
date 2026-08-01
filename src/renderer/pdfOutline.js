@@ -133,17 +133,75 @@ function sectionsDigest(ranges, pageTexts, { maxCharsPerSection = 6000, maxTotal
   return `${joined.slice(0, maxTotalChars)}\n…(전체 길이 제한으로 이후 생략)`;
 }
 
-// ranges → "1. 제목 (p.1-3)" 줄들로 된 짧은 목차 개요. depth를 들여쓰기(2칸/단계)로 표현한다.
-// sectionsDigest와 달리 헤딩 마크업 없이 목차 느낌만 주는 용도라 번호는 항상 순번(depth 무관)이다.
+// 제목이 이미 "1", "1.1", "2.3." 같은 번호로 시작하는지 판정한다.
+// 많은 PDF가 목차 제목 자체에 '1 Introduction'/'2.1 Method'처럼 논문 번호를 담아 온다 —
+// 그런 제목에 우리 번호를 또 붙이면 '1. 1 Introduction'처럼 이중으로 매겨진다.
+// 판정 정규식은 "숫자(.숫자)* 뒤에 구분자(옵션)와 공백, 그다음 실제 글자"가 와야만 맞는다고
+// 좁게 잡았다 — 아래 세 문구가 실제로 이 정규식을 피해 가야 하는 반증 사례다.
+//   '3D Reconstruction'      → 숫자 바로 뒤에 문자가 붙어 있어 구분자도 공백도 없다.
+//   'GPT-4 judgments'        → 애초에 제목이 숫자로 시작하지 않는다.
+//   'Proof of Lemma 1 and 2' → 숫자가 제목 끝 쪽에 있을 뿐 맨 앞이 아니다.
+// 세 경우 모두 '숫자 다음 공백'이 성립하지 않아 정규식이 걸리지 않는다.
+// 참고로 부록을 A/B 문자로 매기는 PDF('A Mathematical Derivations')는 이 정규식에 안 걸려
+// 우리 번호가 그대로 붙는다 — 그 한계는 아래 outlineDigest 주석에 적어 둔다.
+const NUMBERED_TITLE_RE = /^\d+(?:\.\d+)*[.):]?\s+(?=\S)/;
+function hasOwnNumbering(title) {
+  return NUMBERED_TITLE_RE.test(title);
+}
+
+// (스택 기반) depth 시퀀스를 계층 번호(1, 1.1, 1.2, 2, 2.1 …)로 바꾼다.
+// stack은 호출자가 outlineDigest 한 번 실행하는 동안 유지하는 [{ rawDepth, num }, …] —
+// 인덱스 0이 최상위, 끝이 현재 위치다. 항목 하나를 처리할 때마다:
+//   1) 스택 맨 위의 rawDepth가 이번 depth보다 '더 깊으면' 판다(그 하위 트리는 이미 끝났다).
+//   2) 판 뒤 맨 위의 rawDepth가 이번 depth와 '같으면' 형제다 — 그 번호를 이어받아 +1.
+//   3) 그렇지 않으면(스택이 비었거나 맨 위가 이번 depth보다 얕으면) 새 하위 단계다 — 1로 시작.
+// 이 방식의 핵심은 "번호를 매길 때 절대 원래 depth 값 자체를 쓰지 않는다"는 것이다 — 스택에
+// 쌓인 개수(=유효 depth)만 쓴다. 그래서 depth가 1 → 3으로 건너뛰어도(rawDepth 3인 항목이
+// 스택엔 rawDepth 1짜리 하나만 있는 상태에서 들어와도) 규칙 3에 걸려 "1.1"이 되지, "1..1"이나
+// "1.0.1"처럼 구멍이 뚫리지 않는다 — 건너뛴 만큼을 그냥 "한 단계 더 들어간 자식"으로 흡수한다.
+// 그 뒤 또 rawDepth 3인 형제가 오면 규칙 2(맨 위 rawDepth 3와 일치)에 걸려 "1.2"가 되어
+// 정상적으로 형제 취급된다 — rawDepth를 스택에 함께 저장해 두었기 때문에 가능하다.
+// depth가 1보다 작거나 숫자가 아니면 1로 클램프해 방어한다(depth 0 이하나 깨진 값 대비).
+function nextSectionNumber(stack, depth) {
+  const d = Number.isFinite(depth) && depth >= 1 ? Math.floor(depth) : 1;
+  while (stack.length && stack[stack.length - 1].rawDepth > d) stack.pop();
+  if (stack.length && stack[stack.length - 1].rawDepth === d) {
+    const prev = stack.pop();
+    stack.push({ rawDepth: d, num: prev.num + 1 });
+  } else {
+    stack.push({ rawDepth: d, num: 1 });
+  }
+  return stack.map((e) => e.num).join('.');
+}
+
+// ranges → "1. 제목 (p.1-3)" 줄들로 된 짧은 목차 개요. 번호는 depth를 반영한 계층 번호
+// (1, 1.1, 1.2, 2, 2.1 …)이고, 들여쓰기(2칸/단계)도 원래 depth가 아니라 그 계층 번호가
+// 실제로 매겨진 유효 depth(스택 길이)를 따른다 — depth가 건너뛴 항목은 번호도 들여쓰기도
+// 함께 "한 단계 더 들어간 자식"으로 취급되어 서로 어긋나지 않는다.
+//
+// 예전에는 번호를 아예 떼서 냈다: `${i+1}. `처럼 평탄화 순번을 붙였더니 모델이 그 번호를
+// 절 제목에 그대로 옮겨 적었는데, 원문 PDF 목차에는 없는 번호인 데다 평탄화 순번이라 계층과도
+// 어긋났다 — 5의 하위 절이 6이 되는 식이다(arXiv 2305.18290에서 1~29가 그렇게 매겨졌다).
+// 이번에 되살리는 번호는 그 문제를 계층 번호로 고친 것이다. 제목이 이미 자기 번호를 갖고
+// 있으면(hasOwnNumbering) 우리 번호를 덧붙이지 않고 원문 제목을 그대로 쓴다 — 다만 스택
+// 카운터는 그 항목의 위치만큼 그대로 전진시켜서 다음 형제/자식 번호가 밀리지 않게 한다.
+//
+// 한계: 부록(Appendix)은 논문에서 보통 A, B로 매겨지지만, 우리는 PDF 목차의 depth 정보만
+// 갖고 있어서 "이 항목이 본문 마지막 장인지 부록 시작인지"를 구분할 방법이 없다. 그 결과
+// 부록 첫 절 'Mathematical Derivations'가 실제로는 'Appendix A'인데도 우리 번호로는 그냥
+// depth 순서상 다음 숫자(예: 8)가 매겨진다 — 목차 데이터만으로는 고칠 수 없는 한계이고,
+// 지어내서 해결한 척하지 않는다.
 function outlineDigest(ranges) {
   const list = Array.isArray(ranges) ? ranges : [];
   if (!list.length) return '';
+  const stack = []; // 이 함수 호출 1회 동안만 유지하는 번호 매김 상태(순수 함수 유지를 위해 지역 변수로 둔다)
   return list
-    .map((r, i) => {
-      const depth = Number.isFinite(r?.depth) ? r.depth : 1;
-      const indent = '  '.repeat(Math.max(0, depth - 1));
-      const title = r?.title || '(제목 없음)';
-      return `${indent}${i + 1}. ${title} (${pageRangeLabel(r?.startPage, r?.endPage)})`;
+    .map((r) => {
+      const rawTitle = r?.title || '(제목 없음)';
+      const number = nextSectionNumber(stack, r?.depth); // 부작용으로 stack을 전진시킨다
+      const indent = '  '.repeat(Math.max(0, stack.length - 1));
+      const title = hasOwnNumbering(rawTitle) ? rawTitle : `${number}. ${rawTitle}`;
+      return `${indent}${title} (${pageRangeLabel(r?.startPage, r?.endPage)})`;
     })
     .join('\n');
 }

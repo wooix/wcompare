@@ -149,7 +149,13 @@
   /* 보기 형태 3종 — 어떤 열을 보여줄지만 CSS로 끊는다. 문서 로드 상태는 건드리지 않으므로
      형태를 오가도 열려 있던 PDF·마커·스크롤 위치가 그대로 유지된다.
      숨긴 pane은 폭이 0이라 비율 동기·page-width 계산에서 빼야 한다 → dualView.setPaneVisible 참고. */
-  #pdfview.layout-compare .pdf-summary { display:none; }
+  #pdfview.layout-compare .pdf-summary, #pdfview.layout-compare .pane-split { display:none; }
+  /* 요약 폭 조절 손잡이. 실제 폭은 4px지만 잡기 쉬우라고 좌우로 2px씩 넘겨 히트 영역을 넓힌다
+     (margin 음수 + 그만큼의 투명 border가 아니라, 단순히 폭을 주고 배경만 가운데 1px에 그린다).
+     drag 중에는 pointer capture가 걸려 손이 손잡이를 앞질러도 이벤트를 놓치지 않는다. */
+  .pane-split { flex:0 0 5px; cursor:col-resize; background:var(--border-faint);
+    background-clip:content-box; border-left:2px solid transparent; border-right:2px solid transparent; }
+  .pane-split:hover, .pane-split.dragging { background-color:var(--accent); }
   #pdfview.layout-summary .pdf-pane[data-side=right] { display:none; }
   #pdf-layout { display:inline-flex; }
   #pdf-layout button { border-radius:0; }
@@ -157,26 +163,25 @@
   #pdf-layout button:last-child { border-radius:0 4px 4px 0; }
   #pdf-layout button + button { border-left:none; }
 
-  /* Markdown TOC 드로어 — #diff-wrap의 좌/우 flex 자식. DOM 순서(left, editor, right)로
-     오른쪽 드로어가 창의 오른쪽 끝에 온다. 표시/숨김은 .show 클래스로 제어.
+  /* Markdown TOC 드로어 — #diff-wrap의 첫 flex 자식(왼쪽 전용). DOM 순서(left, editor)로
+     창의 왼쪽 끝에 온다. 표시/숨김은 .show 클래스로 제어.
+     오른쪽 드로어(#md-toc-right)는 없앴다 — 오른쪽 파일은 비교 대상일 뿐 순서대로 읽어 내려가는
+     주 문서가 아니라, 드로어 둘이 화면을 잡아먹으면서 어느 쪽을 봐야 할지 헷갈리게만 했다.
      Monaco는 automaticLayout:true라 드로어 폭 변화에 스스로 재배치된다. */
   .md-toc { flex:0 0 200px; display:none; overflow:auto; background:var(--bg-drawer); color:var(--fg-muted);
     font:12px sans-serif; padding:4px; }
   .md-toc.show { display:block; }
   #md-toc-left { border-right:1px solid var(--border-faint); }
-  #md-toc-right { border-left:1px solid var(--border-faint); }
   .pdf-viewer-host { flex:1; position:relative; min-width:0; }
   .pdf-container { position:absolute; inset:0; overflow:auto; background:var(--pdf-bg); }
 
-  /* 목차(TOC) 드로어 — 뷰어를 겹치지 않고 flex 2열로 밀어낸다(겹치면 page-width 왼쪽이 가려짐).
-     열고 닫을 때 dualView가 applyFit으로 폭을 재계산한다. */
+  /* 목차(TOC) 드로어 — #pdfview의 첫 열이다(pane 안이 아니다). 예전에는 pane마다 하나씩
+     두었는데, 그러면 목차를 연 쪽 뷰어만 200px 좁아져 두 문서를 나란히 대조할 때 같은 페이지가
+     서로 다른 배율로 보였다. 밖으로 빼면 두 pane이 언제나 같은 폭이 된다.
+     열고 닫을 때 dualView가 applyFit으로 배율을 재계산한다. */
   .pdf-outline { flex:0 0 200px; display:none; overflow:auto; background:var(--bg-drawer);
     border-right:1px solid var(--border-faint); color:var(--fg-muted); font:12px sans-serif; padding:4px; }
-  .pdf-pane.outline-open .pdf-outline { display:block; }
-  /* 오른쪽 pane에서는 목차 드로어를 뷰어 오른쪽(창의 오른쪽 끝)에 붙인다.
-     flex 자식 기본 order 0 → outline만 order:1이면 viewer-host 뒤로 밀린다.
-     .pdf-close/.pdf-busy는 absolute라 order 영향을 받지 않는다. */
-  .pdf-pane:last-child .pdf-outline { order:1; border-right:none; border-left:1px solid var(--border-faint); }
+  #pdfview.outline-open > .pdf-outline { display:block; }
   .toc-item { display:flex; align-items:center; gap:2px; padding:2px 4px; border-radius:3px;
     cursor:pointer; white-space:nowrap; }
   .toc-item:hover { background:var(--bg-btn); }
@@ -290,7 +295,10 @@
      빈 상태(.sum-empty)·진행(.sum-busy)은 패널 위에 겹치는 오버레이라 .pdf-summary가 기준 박스가 된다.
      주의: .sum-empty/.sum-busy/.sum-err는 JS가 inline display를 직접 세운다(표시 여부는 JS 소관) →
      여기서는 display를 쓰지 않고 정렬만 잡는다. 그렇지 않으면 CSS 선언이 조용히 무시된다. */
-  .pdf-summary { position:relative; flex:0 0 clamp(300px, 30%, 560px); min-width:0;
+  /* 폭은 paneSplit이 style.flex로 직접 세운다(사용자가 드래그로 조절 + localStorage 보존).
+     여기 flex를 남겨 두면 최초 1프레임에 이 값으로 그려졌다가 JS 값으로 튀므로 기본값만 적어 둔다 —
+     paneSplit.DEFAULT_WIDTH와 같은 값이어야 그 깜빡임이 눈에 띄지 않는다. */
+  .pdf-summary { position:relative; flex:0 0 380px; min-width:0;
     display:flex; flex-direction:column; border-left:1px solid var(--border-faint);
     background:var(--bg-panel); color:var(--fg); font:13px sans-serif; }
   .sum-tabs { display:flex; align-items:center; gap:4px; padding:6px; border-bottom:1px solid var(--border-faint); }
@@ -298,11 +306,20 @@
     padding:3px 10px; cursor:pointer; font:12px sans-serif; }
   .sum-tab:hover { background:var(--bg-tab-hover); }
   .sum-tab.on { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); } /* 툴바 토글과 같은 강조 관용구 */
-  /* 오른쪽 끝으로 미는 건 .sum-font가 맡는다(탭바 DOM 순서: 탭 3개 → .sum-font → .sum-regen) */
-  .sum-regen { margin-left:6px; background:var(--bg-btn); color:var(--fg-dim); border:1px solid var(--border);
+  /* 오른쪽 끝으로 미는 건 .sum-font가 맡는다(탭바 DOM 순서: 탭 3개 → .sum-font) */
+  .sum-tab:disabled { opacity:0.4; cursor:default; }
+  /* 동작 버튼 줄(복사 / 저장 / 이 탭 다시 생성) — 탭바와 분리한 둘째 줄이다.
+     왜 탭바에 같이 넣지 않았나: 패널 폭이 clamp(300px,30%,560px)라 최소 300px인데 탭 3개(≈195px)와
+     글씨 버튼 3개(≈72px)만으로 이미 그 폭이 찬다. 여기에 버튼 셋을 더 끼우면 flex가 라벨을 눌러
+     글자가 잘린다(툴바를 2줄로 나눈 것과 같은 이유). 그래서 탭바 DOM 순서 규칙은
+     "탭 3개 → .sum-font"까지로 줄었고 .sum-regen은 이 줄로 내려왔다.
+     표시 여부는 JS가 inline display로 정한다(내용이 없으면 줄 전체를 감춘다) → 여기서 display는
+     .sum-acts에 쓰지 않는다. 대신 JS가 display:'flex'를 직접 세운다. */
+  .sum-acts { justify-content:flex-end; gap:4px; padding:4px 6px; border-bottom:1px solid var(--border-faint); }
+  .sum-acts button { background:var(--bg-btn); color:var(--fg-dim); border:1px solid var(--border);
     border-radius:4px; padding:3px 8px; cursor:pointer; font:11px sans-serif; }
-  .sum-regen:hover { background:var(--bg-btn-hover); }
-  .sum-regen:disabled, .sum-tab:disabled { opacity:0.4; cursor:default; }
+  .sum-acts button:hover { background:var(--bg-btn-hover); }
+  .sum-acts button:disabled { opacity:0.4; cursor:default; }
   /* --sum-font: 요약 본문의 기준 글씨 크기. 아래 마크다운 규칙이 전부 em이라 이 값 하나만
      바꾸면 제목·본문·코드·수식이 함께 커지고 줄어든다(summaryPanel의 A− / A+ / ↺ 버튼). */
   .sum-body { flex:1; min-height:0; overflow:auto; padding:10px 12px; font-size:var(--sum-font, 13px); }
@@ -323,6 +340,38 @@
   .sum-err { color:var(--danger); font-size:12px; margin:8px 0; white-space:pre-wrap; word-break:break-word; }
   .sum-code { background:var(--bg-code); border:1px solid var(--border-soft); border-radius:4px; padding:8px;
     color:var(--fg-dim); font:11px monospace; white-space:pre-wrap; word-break:break-all; max-height:40vh; overflow:auto; }
+
+  /* 절별 요약 탭의 헤딩 목차 — .sum-content가 [본문 .sum-body] + [목차 .sum-toc] 2열이 된다.
+     폭을 고정 170px이 아니라 clamp로 둔 이유: 패널이 최소(300px)까지 좁아지면 고정 170px은 본문에
+     130px밖에 남기지 않아 요약이 한 줄에 몇 글자 들어가지 않는다. 좁을수록 목차도 함께 좁아져야 한다.
+     .toc-item/.toc-title/.toc-toggle/.toc-kids/.toc-empty는 위 md/PDF 목차와 공유하는 전역 규칙이다. */
+  .sum-content { flex:1; min-height:0; display:flex; overflow:hidden; }
+  .sum-content .sum-body { min-width:0; } /* 긴 표·코드가 목차를 밀어내지 못하게 */
+  /* 최소 폭을 110px에서 낮춘 이유: 요약 폭이 이제 사용자 값이라 예전 clamp 하한(300px)보다
+     좁아질 수 있는데, 그때 목차가 110px를 고집하면 본문이 패널의 절반 아래로 밀린다(실측 126/260).
+     좁을수록 목차가 먼저 양보해야 한다 — 본문이 읽히지 않으면 목차만 남아 봐야 소용이 없다. */
+  .sum-toc { flex:0 0 clamp(92px, 32%, 180px); display:none; overflow:auto;
+    border-left:1px solid var(--border-faint); background:var(--bg-drawer); color:var(--fg-muted);
+    font:12px sans-serif; padding:4px; }
+  .sum-toc.show { display:block; }
+  /* 접기 — 접혀도 손잡이(.toc-fold)만은 남는다. 폭을 0으로 만들거나 display:none으로 감추면
+     다시 펼 수단이 화면에서 사라져 되돌릴 방법이 없어진다(localStorage에 굳으므로 앱을 껐다 켜도
+     그대로다). 그래서 손잡이 한 칸(20px)만 남기고 나머지를 숨긴다. */
+  .sum-toc.collapsed { flex:0 0 20px; padding:4px 0; overflow:hidden; }
+  .sum-toc.collapsed .toc-depth, .sum-toc.collapsed .toc-depth-body { display:none; }
+  .toc-fold { display:block; width:100%; margin-bottom:4px; background:var(--bg-btn); color:var(--fg-dim);
+    border:1px solid var(--border); border-radius:4px; padding:1px 0; cursor:pointer; font:11px sans-serif; }
+  .toc-fold:hover { background:var(--bg-btn-hover); color:var(--fg); }
+  .sum-toc.collapsed .toc-fold { border-radius:0; border-left:none; border-right:none; }
+  /* 깊이 선택(1~6) — .sum-font와 같은 "붙은 버튼 그룹" 관용구. flex:1이라 목차가 좁아져도 여섯 칸이 함께 줄어든다. */
+  .toc-depth { display:flex; margin-bottom:4px; }
+  .toc-depth-btn { flex:1; min-width:0; background:var(--bg-btn); color:var(--fg-dim); border:1px solid var(--border);
+    padding:2px 0; cursor:pointer; font:11px sans-serif; border-radius:0; }
+  .toc-depth-btn:first-child { border-radius:4px 0 0 4px; }
+  .toc-depth-btn:last-child { border-radius:0 4px 4px 0; }
+  .toc-depth-btn + .toc-depth-btn { border-left:none; }
+  .toc-depth-btn:hover { background:var(--bg-btn-hover); color:var(--fg); }
+  .toc-depth-btn.on { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
 
   .sum-empty { position:absolute; inset:0; z-index:2; flex-direction:column;
     align-items:center; justify-content:center; gap:8px; padding:16px; text-align:center; }
@@ -496,7 +545,6 @@
   <div id="diff-wrap">
     <div id="md-toc-left" class="md-toc"></div>
     <div id="editor"></div>
-    <div id="md-toc-right" class="md-toc"></div>
   </div>
   <div id="pdfview"></div>
   <div id="statusbars"><div id="vim-left"></div><div id="vim-right"></div></div>

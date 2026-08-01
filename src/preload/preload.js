@@ -28,6 +28,15 @@ contextBridge.exposeInMainWorld('wcompare', {
     // 내장 요약 프롬프트 원문(설정창이 편집 칸의 초기값·'기본값' 버튼에 쓴다). 인자를 받지 않는다 —
     // 사용자가 고친 값은 settings.summaryPrompts로 오가고, 이쪽은 읽기 전용 상수다.
     promptDefaults: () => ipcRenderer.invoke('summary:prompt-defaults'),
+    // 요약 내보내기(복사/저장 공통 1단계): parts({overview,sections,flow})와 title/docPath,
+    // 담을 범위(scope:'all'|'current', tab)를 넘기면 마크다운 문자열과 제안 파일명을 돌려준다.
+    // 순수 계산이라 다이얼로그도 파일 쓰기도 하지 않는다 — 복사는 이 결과의 text를 그대로
+    // copyText로 넘기면 되고, 저장은 아래 export로 그대로 넘긴다. mermaid 펜스 감싸기 같은
+    // 조립 규칙이 복사/저장에서 서로 어긋나지 않도록 조립은 main 쪽 한 곳에서만 한다.
+    exportText: (parts, opts) => ipcRenderer.invoke('summary:export-text', { parts, ...opts }),
+    // 요약 저장(2단계): dialog.showSaveDialog로 사용자가 고른 위치에만 쓴다 — 렌더러는 텍스트와
+    // "기본 파일명 힌트"만 넘기고 실제 경로는 만들지 않는다. 취소하면 null.
+    exportSave: (text, defaultFileName) => ipcRenderer.invoke('summary:export', { text, defaultFileName }),
   },
   onTranslateProgress: (cb) => ipcRenderer.on('pdf:translate:progress', (_e, d) => cb(d)),
   // 드롭된 File에서 OS 경로 추출 (최신 Electron은 File.path 제거 → webUtils 사용)

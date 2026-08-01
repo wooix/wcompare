@@ -12,6 +12,9 @@ const { allowed, openedPdfs, normalize, allowPath } = require('./allowlist.js');
 const { downloadPdf } = require('./pdfDownload.js');
 const { summarize, KINDS: SUMMARY_KINDS, PROMPT_DEFAULTS, MAX_PROMPT_PART_CHARS } = require('./paperSummary.js');
 const summaryStore = require('./summaryStore.js');
+const {
+  buildExportMarkdown, defaultExportFileName, sanitizeExportFileName, MAX_EXPORT_CHARS,
+} = require('./summaryExport.js');
 const { triggerShortcutDict } = require('./shortcutDict.js');
 const markerStore = require('./markerStore.js');
 const project = require('./project.js');
@@ -423,6 +426,48 @@ function registerIpc() {
   // 반환값을 그대로 내보내도 안전하다: IPC는 structured clone이라 렌더러가 받는 것은 사본이고,
   // 렌더러에서 뭘 하든 main의 기본값 객체는 그대로 남는다.
   ipcMain.handle('summary:prompt-defaults', () => PROMPT_DEFAULTS);
+
+  // ===== 요약 내보내기 (복사/저장 공통 1단계 + 저장) =====
+  // 마크다운 조립(특히 flow를 ```mermaid로 감싸는 규칙)은 summaryExport.js 한 곳에서만 한다.
+  // 복사(클립보드)와 저장(파일)이 서로 다른 곳에서 각자 조립하면 두 경로의 결과가 갈릴 수 있어서다.
+  // 이 핸들러는 순수 계산만 한다 — 다이얼로그도 파일 쓰기도 하지 않는다. docPath는 파일을
+  // 읽거나 쓰는 데 전혀 쓰이지 않고(path.basename으로 표시용 이름만 뽑는다) 그 결과도
+  // sanitizeFileNamePart를 거치므로, 다른 핸들러들과 달리 openedPdfs 검문이 필요 없다.
+  ipcMain.handle('summary:export-text', (_e, { parts, title, docPath, scope, tab } = {}) => {
+    const text = buildExportMarkdown(parts, { title, docPath, scope, tab });
+    if (text.length > MAX_EXPORT_CHARS) {
+      throw new Error(`내보낼 요약이 너무 큽니다(${MAX_EXPORT_CHARS.toLocaleString()}자 초과)`);
+    }
+    return { text, fileName: defaultExportFileName(docPath, { scope, tab }) };
+  });
+
+  // 요약 저장. 신뢰 경계가 이 파일의 핵심이다: 렌더러는 경로를 만들지 않는다 — 렌더러는
+  // "무엇을 저장할지"(텍스트와 기본 파일명 힌트)만 넘기고, 실제 경로는 사용자가 다이얼로그에서
+  // 고른 것만 쓴다. defaultFileName은 힌트일 뿐이라 여기서도 다시 정화한다(위 export-text를
+  // 거치지 않고 직접 호출되거나, 렌더러 상태가 그 사이 바뀌었을 가능성까지 방어).
+  // 취소하면 조용히 null을 돌려준다. 쓰기 실패는 그대로 throw해 렌더러가 사유를 보여주게 한다
+  // — 요약은 수 분짜리 AI 작업의 결과물이라 "저장한 줄 알았는데 안 됐다"가 가장 나쁜 실패다.
+  ipcMain.handle('summary:export', async (e, { text, defaultFileName } = {}) => {
+    const t = typeof text === 'string' ? text : '';
+    if (!t) throw new Error('내보낼 내용이 없습니다');
+    // 상한: 요약 파트 하나가 아무리 길어도 20만자(summaryStore.MAX_PART_CHARS)고 세 파트를 합쳐도
+    // 60만자 남짓이다. MAX_EXPORT_CHARS(2MB)는 그 3배 이상 여유를 둔 최종 방어선 — 이 핸들러가
+    // 위 export-text를 거치지 않고 직접 불릴 가능성(향후 변경)까지 대비한다.
+    if (t.length > MAX_EXPORT_CHARS) {
+      throw new Error(`내보낼 텍스트가 너무 큽니다(${MAX_EXPORT_CHARS.toLocaleString()}자 초과)`);
+    }
+    const win = BrowserWindow.fromWebContents(e.sender);
+    // 확장자를 지켜 주는 쪽으로 정화한다 — sanitizeFileNamePart를 그대로 쓰면 80자 상한이
+    // '-요약.md'까지 잘라, 파일명이 긴 논문에서 확장자 없는 기본값이 다이얼로그에 떴다.
+    const name = sanitizeExportFileName(defaultFileName);
+    const res = await dialog.showSaveDialog(win, {
+      defaultPath: name,
+      filters: [{ name: 'Markdown', extensions: ['md'] }],
+    });
+    if (res.canceled || !res.filePath) return null;
+    fs.writeFileSync(res.filePath, t, 'utf8');
+    return { path: res.filePath };
+  });
 
   // PDF 우클릭 메뉴. 렌더러가 "선택이 있는가 / 이 좌표에 마커가 있는가"만 알려주고,
   // 메뉴 구성은 메인이 한다(렌더러가 임의 메뉴를 띄우지 못하게).

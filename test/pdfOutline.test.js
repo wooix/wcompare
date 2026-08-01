@@ -210,7 +210,11 @@ test('sectionsDigest: pageTexts가 비어있거나 없어도 안전하다', () =
 // outlineDigest
 // ---------------------------------------------------------------------------
 
-test('outlineDigest: depth를 들여쓰기로, 페이지 범위를 함께 표기한다', () => {
+// 번호는 **계층**이어야 한다. 예전에는 평탄화 순번(`${i+1}. `)을 붙여서 'Sub'가 'Intro'의
+// 하위인데도 2번이 됐고(arXiv 2305.18290에서 1~29가 그렇게 매겨졌다), 모델이 그 번호를 절별
+// 요약 헤딩에 그대로 옮겨 적어 논문의 실제 절 번호와 어긋났다. 이제 depth를 따라 1 / 1.1 / 2로
+// 매겨 논문 번호와 맞춘다.
+test('outlineDigest: depth를 계층 번호와 들여쓰기로, 페이지 범위와 함께 표기한다', () => {
   const ranges = [
     { title: 'Intro', depth: 1, startPage: 1, endPage: 3 },
     { title: 'Sub', depth: 2, startPage: 3, endPage: 5 },
@@ -218,8 +222,42 @@ test('outlineDigest: depth를 들여쓰기로, 페이지 범위를 함께 표기
   ];
   assert.equal(
     outlineDigest(ranges),
-    '1. Intro (p.1-2)\n  2. Sub (p.3-4)\n3. Conclusion (p.5-8)',
+    '1. Intro (p.1-2)\n  1.1. Sub (p.3-4)\n2. Conclusion (p.5-8)',
   );
+});
+
+// 목차 제목에 논문 번호가 이미 들어 있는 PDF가 많다. 우리 번호를 덧붙이면 '1. 1 Introduction'이
+// 되므로, 이미 번호로 시작하는 제목은 그대로 둔다.
+test('outlineDigest: 제목에 이미 번호가 있으면 이중으로 매기지 않는다', () => {
+  const ranges = [
+    { title: '1 Introduction', depth: 1, startPage: 1, endPage: 2 },
+    { title: '2.1 Method', depth: 2, startPage: 2, endPage: 3 },
+  ];
+  assert.equal(outlineDigest(ranges), '1 Introduction (p.1)\n  2.1 Method (p.2)');
+});
+
+// 숫자로 시작하지만 번호가 아닌 제목은 번호가 붙어야 한다(정규식이 이것들을 먹으면 안 된다).
+test('outlineDigest: 숫자로 시작하는 멀쩡한 제목은 번호로 오인하지 않는다', () => {
+  const ranges = [
+    { title: '3D Reconstruction', depth: 1, startPage: 1, endPage: 2 },
+    { title: 'GPT-4 judgments', depth: 1, startPage: 2, endPage: 3 },
+    { title: 'Proof of Lemma 1 and 2', depth: 1, startPage: 3, endPage: 4 },
+  ];
+  assert.equal(outlineDigest(ranges),
+    '1. 3D Reconstruction (p.1)\n2. GPT-4 judgments (p.2)\n3. Proof of Lemma 1 and 2 (p.3)');
+});
+
+// 실제 PDF 목차는 깊이가 건너뛴다(1 → 3). 구멍 뚫린 번호('1..1')를 만들지 않고 한 단계 자식으로
+// 흡수해야 하며, 그 뒤 같은 깊이의 형제가 오면 정상적으로 이어져야 한다.
+// 들여쓰기도 원래 depth가 아니라 **번호의 깊이**를 따른다 — '1.1'인데 세 단계를 들여쓰면
+// 번호와 눈에 보이는 계층이 어긋나 모델이 둘 중 어느 것을 믿을지 알 수 없게 된다.
+test('outlineDigest: depth가 건너뛰어도 번호와 들여쓰기가 함께 흡수된다', () => {
+  const ranges = [
+    { title: 'A', depth: 1, startPage: 1, endPage: 2 },
+    { title: 'B', depth: 3, startPage: 2, endPage: 3 },
+    { title: 'C', depth: 3, startPage: 3, endPage: 4 },
+  ];
+  assert.equal(outlineDigest(ranges), '1. A (p.1)\n  1.1. B (p.2)\n  1.2. C (p.3)');
 });
 
 test('outlineDigest: 빈 입력은 빈 문자열', () => {

@@ -89,17 +89,17 @@ test('TOC 패널: 목차가 뜨고 클릭하면 그 페이지로 이동하며 �
   const before = await pageW();
 
   await win.click('#btn-toc');
-  await expect(win.locator(`${L} .pdf-outline`)).toBeVisible();
-  await expect(win.locator(`${L} .toc-item`)).toHaveCount(5);
+  await expect(win.locator('.pdf-outline')).toBeVisible();
+  await expect(win.locator('.pdf-outline .toc-item')).toHaveCount(5);
   // 드로어는 겹치지 않고 pane을 나눈다 → fit(page-width)이 좁아진 폭으로 재계산된다
   await expect.poll(pageW, { timeout: 5000 }).toBeLessThan(before);
 
-  await win.locator(`${L} .toc-item`, { hasText: 'Section 4' }).click();
+  await win.locator('.pdf-outline .toc-item', { hasText: 'Section 4' }).click();
   await expect(win.locator('#pdf-page')).toHaveValue('4', { timeout: 5000 });
   await expect(win.locator('#btn-back')).toBeEnabled(); // goToDestination 경유 → 히스토리 자동 연동
 
   await win.click('#btn-toc'); // 닫으면 폭 복원
-  await expect(win.locator(`${L} .pdf-outline`)).toBeHidden();
+  await expect(win.locator('.pdf-outline')).toBeHidden();
   await expect.poll(pageW, { timeout: 5000 }).toBeGreaterThanOrEqual(before - 2);
 
   await app.close();
@@ -114,13 +114,16 @@ test('목차 없는 PDF는 TOC 패널에 (목차 없음)을 보여준다', async
   await win.waitForSelector(`${L} canvas`, { timeout: 20000 });
 
   await win.click('#btn-toc');
-  await expect(win.locator(`${L} .toc-empty`)).toHaveText('(목차 없음)');
+  await expect(win.locator('.pdf-outline .toc-empty')).toHaveText('(목차 없음)');
 
   await app.close();
   fs.rmSync(a, { force: true });
 });
 
-test('오른쪽 pane의 TOC 드로어는 뷰어 오른쪽(창의 오른쪽 끝)에 붙는다', async () => {
+test('TOC 드로어는 왼쪽 pane에만 열린다 (양쪽에 PDF가 있어도)', async () => {
+  // 왼쪽 전용 규칙은 diff 모드의 md TOC와 PDF 모드가 같아야 한다. 예전에는 setOutline이 두 pane을
+  // 모두 켜서 오른쪽에도 드로어가 떴다 — 오른쪽은 대조 대상일 뿐 순서대로 읽어 내려가는 문서가
+  // 아니라, 양쪽에 띄우면 좁아진 폭만 두 번 잃는다.
   const a = path.join(os.tmpdir(), `wc-m1-rtoc-a-${Date.now()}.pdf`);
   const b = path.join(os.tmpdir(), `wc-m1-rtoc-b-${Date.now()}.pdf`);
   fs.writeFileSync(a, makePdf(3, { height: 900, outline: true }));
@@ -130,17 +133,30 @@ test('오른쪽 pane의 TOC 드로어는 뷰어 오른쪽(창의 오른쪽 끝)�
   await win.waitForSelector(`${R} canvas`, { timeout: 20000 });
 
   await win.click('#btn-toc');
-  await expect(win.locator(`${L} .pdf-outline`)).toBeVisible();
-  await expect(win.locator(`${R} .pdf-outline`)).toBeVisible();
+  await expect(win.locator('.pdf-outline')).toBeVisible();
+  // 드로어 '개수'로 센다 — toBeHidden()은 DOM에 없는 요소에도 참이라, 승격 뒤에는 감시가 죽는다.
+  await expect(win.locator('#pdfview.outline-open')).toHaveCount(1);
+  await expect(win.locator('.pdf-outline')).toHaveCount(1); // 앱 전체에 하나뿐이다
+  // pane 안에는 목차가 남아 있지 않다(4열 재편으로 밖으로 나갔다).
+  await expect(win.locator(`${L} .pdf-outline`)).toHaveCount(0);
+  await expect(win.locator(`${R} .pdf-outline`)).toHaveCount(0);
 
-  // 오른쪽 pane: 드로어가 뷰어보다 오른쪽(x가 더 큼) — order:1 로 뷰어 뒤에 배치
-  const rOutline = await win.locator(`${R} .pdf-outline`).boundingBox();
-  const rHost = await win.locator(`${R} .pdf-viewer-host`).boundingBox();
-  expect(rOutline.x).toBeGreaterThan(rHost.x);
-  // 왼쪽 pane: 드로어가 뷰어보다 왼쪽(대칭) — 기존 동작 유지
-  const lOutline = await win.locator(`${L} .pdf-outline`).boundingBox();
+  // 목차는 두 pane '왼쪽 바깥'에 온다 — 뷰어를 가리지 않고 첫 열을 차지한다.
+  const outline = await win.locator('.pdf-outline').boundingBox();
   const lHost = await win.locator(`${L} .pdf-viewer-host`).boundingBox();
-  expect(lOutline.x).toBeLessThan(lHost.x);
+  expect(outline.x).toBeLessThan(lHost.x);
+
+  // 목표의 핵심: 두 뷰어 폭이 같다. 목차를 연 상태에서도 성립해야 한다
+  // (예전에는 목차가 든 pane만 200px 좁아져 같은 페이지가 서로 다른 배율로 보였다).
+  const lPane = await win.locator(L).boundingBox();
+  const rPane = await win.locator(R).boundingBox();
+  expect(Math.abs(lPane.width - rPane.width)).toBeLessThanOrEqual(2);
+
+  // 좌우를 바꿔도 목차는 여전히 왼쪽에만 — 문서 교체 경로에서도 규칙이 유지된다.
+  await win.click('#btn-switch');
+  await expect(win.locator('#pdfview.outline-open')).toHaveCount(1);
+  await expect(win.locator('.pdf-outline')).toHaveCount(1); // 드로어는 앱 전체에 하나뿐이다
+  await expect(win.locator('.pdf-outline')).toBeVisible();
 
   await app.close();
   fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });

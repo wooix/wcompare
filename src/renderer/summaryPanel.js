@@ -5,6 +5,7 @@
 // 오류 안내만 맡는다 — 덕분에 LLM 호출 경로가 바뀌어도 여기는 손댈 필요가 없다.
 import { renderMarkdown } from './markdownView.js';
 import { renderMermaid, setMermaidTheme } from './mermaidLoader.js';
+import { createSummaryToc } from './summaryToc.js';
 
 const TABS = [
   { kind: 'overview', label: 'Overview' },
@@ -66,7 +67,7 @@ function createBusy(rootEl) {
   };
 }
 
-export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
+export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, onSave } = {}) {
   const el = document.createElement('div');
   el.className = 'pdf-summary';
 
@@ -84,7 +85,7 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
     tabBtns[t.kind] = b;
   }
   // 글씨 크기 조절 — 탭바 오른쪽에 붙는다(.sum-font의 margin-left:auto가 여기를 기준으로 민다).
-  // DOM 순서는 CSS가 전제하는 "탭 3개 → .sum-font → .sum-regen"을 지켜야 한다.
+  // DOM 순서는 CSS가 전제하는 "탭 3개 → .sum-font"를 지켜야 한다(동작 버튼은 아래 .sum-acts 줄).
   const fontBox = document.createElement('div');
   fontBox.className = 'sum-font';
   const fontDec = document.createElement('button');
@@ -102,11 +103,36 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
   fontBox.append(fontDec, fontReset, fontInc);
   tabbar.appendChild(fontBox);
 
-  const regen = document.createElement('button');
-  regen.className = 'sum-regen';
-  regen.textContent = '다시 생성';
-  regen.title = '요약을 처음부터 다시 만듭니다';
-  tabbar.appendChild(regen);
+  // ===== 동작 버튼 줄 =====
+  // 탭바에 같이 넣지 않은 이유: 패널 폭이 최소 300px인데 탭 3개 + 글씨 버튼 3개로 이미 그 폭이
+  // 찬다. 여기에 복사·저장·다시 생성까지 끼우면 flex가 라벨을 눌러 글자가 잘린다.
+  // 내용이 하나도 없을 때는 줄 전체를 감춘다(syncEmpty) — 빈 요약에 대고 복사/저장할 것이 없다.
+  const acts = document.createElement('div');
+  acts.className = 'sum-acts';
+  const mkAct = (cls, label, title) => {
+    const b = document.createElement('button');
+    b.className = cls;
+    b.textContent = label;
+    b.dataset.label = label; // flash()가 되돌릴 원래 라벨(연타로 '복사됨됨'이 되지 않게)
+    b.title = title;
+    acts.appendChild(b);
+    return b;
+  };
+  const copyBtn = mkAct('sum-copy', '복사', '요약 전체를 마크다운으로 클립보드에 복사합니다');
+  const saveBtn = mkAct('sum-save', '저장', '요약 전체를 마크다운 파일로 저장합니다');
+  // 범위가 "활성 탭 하나"라는 사실을 라벨 자체에 싣는다 — 툴팁만으로는 세 탭이 전부 다시
+  // 만들어진다고 오해한 채 누르게 된다(실제로 그렇게 동작하던 시절의 라벨이 '다시 생성'이었다).
+  const regen = mkAct('sum-regen', '이 탭 다시 생성', '현재 탭의 요약만 다시 만듭니다');
+
+  // 성공을 알리는 방법: 토스트를 새로 만들지 않고 버튼 라벨을 잠깐 바꾼다. 복사·저장은
+  // 결과가 화면에 보이지 않는 동작이라 아무 반응이 없으면 눌렸는지조차 알 수 없는데,
+  // 라벨 교체는 시선이 이미 가 있는 자리에서 답을 준다(오류는 기존 .sum-err가 맡는다).
+  const flashTimers = new WeakMap();
+  function flash(btn, text) {
+    clearTimeout(flashTimers.get(btn));
+    btn.textContent = text;
+    flashTimers.set(btn, setTimeout(() => { btn.textContent = btn.dataset.label; }, 1200));
+  }
 
   // ===== 본문 =====
   // 탭별 컨테이너를 셋 다 유지하고 활성 것만 .on을 붙인다(표시/숨김은 CSS가 담당).
@@ -121,6 +147,19 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
     body.appendChild(p);
     panes[t.kind] = p;
   }
+
+  // 본문 + 절별 요약 목차를 담는 2열. 목차는 '절별 요약' 탭에서만 드러난다(setTab).
+  const content = document.createElement('div');
+  content.className = 'sum-content';
+  content.appendChild(body);
+  const toc = createSummaryToc(content, {
+    // 목차는 "몇 번째 헤딩인가"(ord)만 알려준다 — 실제 스크롤은 렌더된 pane에서 여기가 한다.
+    // 제목 문자열로 찾지 않는 이유: 같은 제목이 두 절에 나오면 늘 첫 번째만 잡힌다.
+    onJump(h) {
+      const heads = panes.sections.querySelectorAll('h1,h2,h3,h4,h5,h6');
+      heads[h.ord]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    },
+  });
 
   const err = document.createElement('div');
   err.className = 'sum-err';
@@ -141,7 +180,7 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
   emptyHint.textContent = '원문 전체를 읽어 개요·절별 요약·흐름도를 만듭니다 (문서가 길면 시간이 걸립니다)';
   empty.append(emptyTitle, go, emptyHint);
 
-  el.append(tabbar, body, err, empty);
+  el.append(tabbar, acts, content, err, empty);
   const setBusy = createBusy(el); // 빈 상태까지 덮도록 마지막에 붙인다
   hostEl.appendChild(el);
 
@@ -176,16 +215,21 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
   // 내용이 바뀌는 곳(setPart/reset)에서도 올려 준다 — 그래야 이미 날아간 렌더가 새 화면을 덮지 않는다.
   let flowToken = 0;
   const filled = { overview: false, sections: false, flow: false };
+  // 내보내기(복사/저장)가 넘길 원문. **화면에 실제로 들어간 값**을 담는다 — 상한(MAX_TEXT/MAX_FLOW)에
+  // 걸려 잘렸다면 잘린 쪽을 담는다. "내보낸 것 = 보고 있는 것"이 어긋나면 어느 쪽이 진짜인지
+  // 확인할 방법이 없다.
+  const rawParts = { overview: '', sections: '', flow: '' };
   let pending = false; // 생성/재생성 중복 실행 방지 (버튼 연타)
   let runToken = 0;    // 생성 실행의 세대. reset이 올 때마다 올려 낡은 실행의 뒷정리를 무시한다.
 
   const hasContent = () => TABS.some((t) => filled[t.kind]);
 
-  // 빈 상태와 "다시 생성" 버튼은 서로 배타적이다 — 내용 유무 한 곳에서만 판단해 어긋나지 않게 한다.
+  // 빈 상태와 동작 버튼 줄은 서로 배타적이다 — 내용 유무 한 곳에서만 판단해 어긋나지 않게 한다.
+  // CSS가 아니라 여기서 display를 세우므로(.sum-acts에는 display 선언이 없다) 'flex'를 직접 쓴다.
   function syncEmpty() {
     const has = hasContent();
     empty.style.display = has ? 'none' : 'flex';
-    regen.style.display = has ? '' : 'none';
+    acts.style.display = has ? 'flex' : 'none';
   }
 
   function setError(msg) {
@@ -247,6 +291,7 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
       panes[t.kind].classList.toggle('on', on);
     }
     if (kind === 'flow') drawFlow();
+    toc.setVisible(kind === 'sections'); // 목차는 절별 요약 탭 전용 — 다른 탭에서는 폭만 잡아먹는다
   }
 
   function setPart(kind, text) {
@@ -258,6 +303,7 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
       flowDrawn = '';
       flowToken++; // 날아가 있는 옛 렌더가 돌아와 새 상태를 덮지 않게 여기서 무효화한다
       filled.flow = !!flowCode;
+      rawParts.flow = flowCode;
       // 빈 문자열은 마크다운 탭과 마찬가지로 "지우라는 뜻"이다. drawFlow는 빈 코드에서 즉시 빠져나가므로
       // 여기서 명시적으로 비우지 않으면 이전 문서의 SVG가 다음 문서 화면에 그대로 남는다
       // (요약 캐시는 flow가 없을 때 ''를 돌려주는 것이 정상 상태다).
@@ -267,6 +313,9 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
       const t = s.length > MAX_TEXT ? `${s.slice(0, MAX_TEXT)}\n\n…(이하 생략)` : s;
       renderMarkdown(panes[kind], t);
       filled[kind] = !!t;
+      rawParts[kind] = t;
+      // 목차는 반드시 "잘린 뒤의 t"로 그린다 — 그래야 ord(몇 번째 헤딩인가)가 렌더된 DOM과 맞는다.
+      if (kind === 'sections') toc.render(t);
     } else {
       return;
     }
@@ -275,6 +324,8 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
 
   function reset() {
     for (const t of TABS) panes[t.kind].replaceChildren();
+    for (const k of Object.keys(rawParts)) rawParts[k] = '';
+    toc.render(''); // 앞 문서의 목차가 새 문서 화면에 남지 않게(가시성은 아래 setTab이 끈다)
     flowCode = '';
     flowDrawn = '';
     flowToken++; // 진행 중이던 렌더의 결과가 방금 비운 pane에 늦게 들어오지 않게 한다
@@ -289,31 +340,43 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
     // 그 경우 pending이 참으로 굳어 버튼이 영구히 잠긴다(실제로 재현된 버그).
     runToken++; // 늦게 끝난 옛 실행이 방금 푼 잠금을 다시 걸지 않게 한다
     pending = false;
-    go.disabled = regen.disabled = false;
+    setLocked(false);
     syncEmpty();
+  }
+
+  // 생성·복사·저장은 한 번에 하나만 돈다 → 잠금도 한 곳에서 건다.
+  // 복사/저장까지 함께 잠그는 이유: 생성 중에는 parts가 탭마다 순서대로 채워지는 중이라,
+  // 그때 내보내면 "절반만 든 요약"이 파일로 남는다.
+  function setLocked(v) {
+    go.disabled = regen.disabled = copyBtn.disabled = saveBtn.disabled = v;
   }
 
   // 생성/재생성 공통. 콜백이 던진 오류는 패널이 직접 보여준다 — 호출측이 try/catch를 반복하지 않게.
   // 실행 도중 reset이 오면(문서 교체) 이 실행은 낡은 것이 되므로, 끝나더라도 화면을 건드리지 않는다.
+  // 콜백이 돌려준 값을 그대로 넘겨준다 — 복사/저장이 "복사됨"/"저장됨" 같은 알림 문구를
+  // 돌려주면 호출부가 그것을 버튼 라벨에 잠깐 띄운다(취소는 빈 문자열 → 아무 말도 하지 않는다).
   async function run(fn) {
-    if (!fn || pending) return;
+    if (!fn || pending) return undefined;
     const token = ++runToken;
     pending = true;
-    go.disabled = regen.disabled = true;
+    setLocked(true);
     setError('');
     try {
-      await fn();
+      return await fn();
     } catch (e) {
       if (token === runToken) setError(e?.message || String(e));
+      return undefined;
     } finally {
       if (token === runToken) {
         pending = false;
-        go.disabled = regen.disabled = false;
+        setLocked(false);
       }
     }
   }
   go.addEventListener('click', () => run(onGenerate));
   regen.addEventListener('click', () => run(onRegenerate));
+  copyBtn.addEventListener('click', async () => { const n = await run(onCopy); if (n) flash(copyBtn, n); });
+  saveBtn.addEventListener('click', async () => { const n = await run(onSave); if (n) flash(saveBtn, n); });
 
   setTab('overview');
   syncEmpty();
@@ -335,6 +398,8 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate } = {}) {
     setTab,
     setTheme,
     getTab: () => tab,
+    // 내보내기용 원문. 사본을 돌려준다 — 호출부가 실수로 고쳐도 패널 상태가 흔들리지 않게.
+    getParts: () => ({ ...rawParts }),
     hasContent,
     reset,
   };

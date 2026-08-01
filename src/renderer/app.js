@@ -7,6 +7,7 @@ import { setStatus } from './toolbar.js';
 import { setupDnd } from './dnd.js';
 import { createDualView } from './pdfDualView.js';
 import { createSummaryPanel } from './summaryPanel.js';
+import { createPaneSplit } from './paneSplit.js';
 import { flattenOutline, sectionRanges, sectionsDigest, outlineDigest } from './pdfOutline.js';
 import { createMdToc } from './mdToc.js';
 import { normalizeEvent, hasModifier, format as fmtShortcut, isReserved, ACTIONS } from './shortcuts.js';
@@ -77,6 +78,7 @@ setSaveHandler(save);
 let mode = 'diff';
 let dualView = null;
 let summaryPanel = null;
+let paneSplit = null; // 요약 폭 드래그 손잡이 — dualView와 요약 패널이 생긴 뒤에 만들어진다
 const pdfPaths = { left: null, right: null };
 let pdfState = null;
 
@@ -117,7 +119,6 @@ function setLayout(l) {
 let mdTocOpen = false;
 const mdToc = createMdToc(editorApi, {
   leftEl: $('md-toc-left'),
-  rightEl: $('md-toc-right'),
   onChange: () => updateTocBtn(), // 콘텐츠 변경(디바운스) → 표시 규칙 재평가 + 재렌더
 });
 function toggleMdToc() { mdTocOpen = !mdTocOpen; updateTocBtn(); }
@@ -134,12 +135,14 @@ function updateTocBtn() {
     return;
   }
   const isMd = (s) => !!editorApi.getState(s).path && editorApi.languageOf(s) === 'markdown';
-  const anyMd = isMd('left') || isMd('right');
-  if (!anyMd) mdTocOpen = false; // markdown 파일이 한쪽도 없으면 열림 상태 해제
-  btn.disabled = !anyMd;
+  // 판단 기준을 "한쪽이라도 markdown"에서 "왼쪽이 markdown"으로 좁혔다. 드로어가 왼쪽 하나뿐이 된
+  // 뒤로는, 오른쪽만 markdown일 때 버튼을 열어 두면 눌러도 보여줄 것이 없어 "눌리는데 아무 일도
+  // 일어나지 않는" 버튼이 된다 — 그런 버튼보다 비활성이 정직하다.
+  const canToc = isMd('left');
+  if (!canToc) mdTocOpen = false; // 왼쪽이 markdown이 아니면 열림 상태 해제
+  btn.disabled = !canToc;
   btn.textContent = 'TOC' + (mdTocOpen ? ' ✓' : '');
-  mdToc.render('left', mdTocOpen && isMd('left'));
-  mdToc.render('right', mdTocOpen && isMd('right'));
+  mdToc.render(mdTocOpen && canToc);
 }
 function ensureDualView() {
   if (dualView) return dualView;
@@ -159,13 +162,25 @@ function ensureDualView() {
       throw new Error(ipcMessage(e)); // main이 쓴 한국어 문장만 남겨 그대로 보여 준다
     }
   });
-  // 요약 패널은 dualView가 만든 .pdf-panes와 형제로 붙는다(세 번째 열).
+  // 요약 패널은 dualView가 만든 .pdf-panes와 형제로 붙는다(네 번째 열).
   // 던진 오류는 패널이 스스로 인라인 표시하므로 여기서 try/catch로 감싸지 않는다.
   summaryPanel = createSummaryPanel($('pdfview'), {
     onGenerate: () => generateSummary(),
-    onRegenerate: () => generateSummary(),
+    // 재생성은 지금 보고 있는 탭 하나만 — 다른 두 탭의 캐시를 날리지 않는다.
+    onRegenerate: () => generateSummary([summaryPanel.getTab()]),
+    onCopy: () => exportSummary(false),
+    onSave: () => exportSummary(true),
   });
   summaryPanel.setTheme(theme); // 패널은 나중에 만들어지므로 현재 테마를 지금 물려준다
+  // 스플리터는 요약 패널이 생긴 뒤에 만든다 — 대상 요소가 있어야 그 '앞'에 끼워 넣을 수 있다.
+  // 결과적으로 #pdfview는 [목차 | .pdf-panes | 스플리터 | 요약] 네 열이 된다.
+  paneSplit = createPaneSplit($('pdfview'), {
+    target: summaryPanel.el,
+    onResize: () => dualView?.relayout(), // 열 폭이 바뀌었으니 page-width 배율을 다시 맞춘다
+  });
+  // 창 크기가 바뀌면 허용 범위도 달라진다 — 넓은 화면에서 요약을 크게 잡아 둔 채 창을 좁히면
+  // 뷰어가 사라질 수 있으므로 저장값을 새 창 폭에 맞춰 다시 조인다.
+  window.addEventListener('resize', () => paneSplit?.apply());
   applyLayout();
   return dualView;
 }
@@ -350,10 +365,15 @@ async function collectSummaryMaterial(side) {
   };
 }
 
-// 세 탭을 순서대로 만든다. Overview가 제일 짧고 빨라 먼저 띄우면 나머지를 기다리는 동안
-// 읽을거리가 생긴다. 하나가 실패해도 나머지는 계속 만든다 — 흐름도 하나가 깨졌다고
+// 탭을 순서대로 만든다. 기본은 세 탭 전부(최초 생성)지만, "다시 생성"은 지금 보는 탭 하나만
+// 넘겨받는다(kinds). Overview가 제일 짧고 빨라 먼저 띄우면(전체 생성일 때) 나머지를 기다리는
+// 동안 읽을거리가 생긴다. 하나가 실패해도 나머지는 계속 만든다 — 흐름도 하나가 깨졌다고
 // 요약 전체를 잃는 것이 가장 아까운 실패이기 때문.
-async function generateSummary() {
+async function generateSummary(kinds = SUMMARY_KINDS) {
+  // 호출자가 뭘 넘기든 SUMMARY_KINDS의 부분집합으로만 좁힌다 — 낯선 kind나 중복이 그대로
+  // 진행률 분모·저장 경로까지 흘러들지 않게(방어적 필터링), 순서도 SUMMARY_KINDS 기준으로 고정.
+  kinds = SUMMARY_KINDS.filter((k) => kinds.includes(k));
+  if (!kinds.length) return;
   const side = summarySide();
   if (!side) throw new Error('먼저 PDF를 여세요');
   if (translating) throw new Error('번역이 끝난 뒤에 생성할 수 있습니다');
@@ -373,27 +393,45 @@ async function generateSummary() {
   }
   if (!alive()) return; // 본문을 읽는 사이에 문서가 바뀌었다 — 조용히 물러난다
 
+  // 빈 값이 아니라 기존 캐시에서 시작한다 — summaryStore.save는 병합 없이 통째로 덮어쓰므로,
+  // 여기서 미리 깔아 두지 않으면 재생성하지 않은 탭과(아래) 실패한 탭의 캐시가 저장 시 함께
+  // 날아간다(예전엔 실패한 kind가 ''로 저장돼 화면엔 옛 내용이 남는데 캐시는 사라지는 불일치가 있었다).
   const parts = { overview: '', sections: '', flow: '' };
+  try {
+    const prev = await window.wcompare.summary.load(docPath);
+    if (prev?.parts) Object.assign(parts, prev.parts);
+  } catch (e) {
+    console.warn('요약 캐시 선로드 실패(무시):', e?.message || e); // 캐시가 없어도 생성은 계속된다
+  }
+
   const failed = [];
   let truncated = false;
   let done = 0;
+  let produced = 0; // 이번 실행이 실제로 만들어 낸 파트 수 — 저장 여부를 이걸로 판단한다
+  // 단일 탭 재생성은 단계가 하나뿐이라 ratio가 끝날 때까지 0%로 굳는다 — createBusy는 ratio가
+  // 숫자가 아니면 막대를 숨기고 "불확정"으로 보여 주므로 그때는 ratio를 넘기지 않는다.
+  // "완성된 탭부터 읽으라"는 안내도 탭 하나짜리 실행에는 뜻이 없어 함께 뺀다.
+  const many = kinds.length > 1;
   try {
-    for (const kind of SUMMARY_KINDS) {
+    for (const kind of kinds) {
       if (!alive()) return; // 문서가 바뀌었다 — 남은 탭을 만들 이유가 없다
       summaryPanel.setBusy({
         title: '논문 요약 생성 중…',
-        sub: `${SUMMARY_LABEL[kind]} (${done + 1}/${SUMMARY_KINDS.length})`,
-        hint: '완성된 탭부터 바로 읽을 수 있습니다',
-        ratio: done / SUMMARY_KINDS.length,
+        sub: many ? `${SUMMARY_LABEL[kind]} (${done + 1}/${kinds.length})` : `${SUMMARY_LABEL[kind]} 다시 생성 중`,
+        ...(many ? { hint: '완성된 탭부터 바로 읽을 수 있습니다', ratio: done / kinds.length } : {}),
       });
       try {
         const res = await window.wcompare.summarize({ path: docPath, kind, ...material });
         parts[kind] = res.content;
+        produced++;
         truncated = truncated || !!res.truncated;
         if (!alive()) return; // 기다리는 사이에 문서가 바뀌었다면 새 화면에 앞 문서 요약을 쓰지 않는다
         summaryPanel.setPart(kind, res.content);
-        if (kind === 'overview') summaryPanel.setTab('overview'); // 먼저 완성된 것을 바로 보여 준다
+        // 여러 탭을 한꺼번에 만들 때만 완성된 overview로 점프한다 — 탭 하나만 재생성하는 중에는
+        // 사용자가 보고 있던(재생성을 누른) 탭을 그대로 두어야 한다("낚아채지 않는다").
+        if (kind === 'overview' && kinds.length > 1) summaryPanel.setTab('overview');
       } catch (e) {
+        // 실패해도 parts[kind]는 위에서 깔아 둔 기존 캐시 값 그대로 남는다 — ''로 덮이지 않는다.
         failed.push(`${SUMMARY_LABEL[kind]} — ${ipcMessage(e)}`);
       }
       done++;
@@ -402,13 +440,47 @@ async function generateSummary() {
     // 낡은 실행이 새 문서의 진행 표시를 지우지 않게 한다.
     if (alive()) summaryPanel.setBusy(null);
     // 문서가 바뀌었더라도 여기까지 만든 것은 그 문서의 캐시로 남긴다 — 다시 열면 바로 뜬다.
-    // summaryStore는 넘긴 parts를 병합 없이 덮어쓰므로 항상 세 파트를 함께 넘긴다.
-    if (SUMMARY_KINDS.some((k) => parts[k])) {
+    // summaryStore는 넘긴 parts를 병합 없이 덮어쓰므로, 재생성 대상이 아닌 탭도 위에서 미리
+    // 캐시로 깔아 둔 값을 포함해 항상 세 파트를 함께 넘긴다.
+    // 판단 기준은 "내용이 있는가"가 아니라 "이번 실행이 만들었는가"다 — parts가 캐시로 미리
+    // 채워져 있어 내용 검사는 항상 참이 되고, 그대로 두면 실패만 한 재생성이 내용은 같은 파일을
+    // 다시 쓰면서 meta.truncated만 이번 실행 값(false)으로 조용히 뒤집어 놓는다.
+    if (produced) {
       window.wcompare.summary.save(docPath, parts, { truncated })
         .catch((e) => console.warn('요약 저장 실패(무시):', e?.message || e));
     }
   }
   if (failed.length) throw new Error(failed.join('\n'));
+}
+
+// 요약 내보내기(복사/저장). 마크다운 조립은 main의 summaryExport.js 한 곳에서만 한다 —
+// 복사와 저장이 각자 조립하면 mermaid 펜스 규칙 같은 것이 두 경로에서 갈린다.
+// 범위는 늘 "요약 전체"다. 탭 하나만 담는 옵션(scope:'current')도 API에는 있지만, 버튼 라벨이
+// 그냥 '복사'/'저장'이라 사용자는 눈앞의 요약 전체가 담기리라 기대한다 — 범위를 좁히려면
+// 라벨에도 그 사실을 실어야 하고(옆의 '이 탭 다시 생성'처럼), 그만큼 좁은 탭바를 또 잡아먹는다.
+// docPath는 표제와 기본 파일명에만 쓰인다(main이 파일을 읽거나 쓰는 데 쓰지 않는다).
+// 던진 오류는 요약 패널이 인라인으로 보여 준다 — 여기서 alert을 띄우지 않는다.
+async function exportSummary(save) {
+  const parts = summaryPanel.getParts();
+  if (!SUMMARY_KINDS.some((k) => parts[k])) throw new Error('내보낼 요약이 없습니다');
+  let text; let fileName;
+  try {
+    ({ text, fileName } = await window.wcompare.summary.exportText(parts, { docPath: summaryDoc || '' }));
+  } catch (e) {
+    throw new Error(ipcMessage(e));
+  }
+  if (!text) throw new Error('내보낼 요약이 없습니다');
+  try {
+    if (!save) {
+      await window.wcompare.copyText(text);
+      return '복사됨';
+    }
+    // 경로는 렌더러가 만들지 않는다 — main이 띄운 저장 다이얼로그에서 사용자가 고른 곳에만 쓴다.
+    const res = await window.wcompare.summary.exportSave(text, fileName);
+    return res ? '저장됨' : ''; // null이면 사용자가 취소한 것 — 아무 말도 하지 않는다
+  } catch (e) {
+    throw new Error(ipcMessage(e));
+  }
 }
 
 // 캐시 복원 — LLM 호출이 느리고 비싸서, 같은 논문을 다시 열면 기다림 없이 떠야 한다.

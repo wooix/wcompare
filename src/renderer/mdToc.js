@@ -1,5 +1,8 @@
-// src/renderer/mdToc.js — Markdown 헤딩 목차(TOC). 파서는 순수 함수(단위 테스트 대상),
-// createMdToc는 diff 에디터의 side별 드로어 렌더를 담당한다.
+// src/renderer/mdToc.js — Markdown 헤딩 목차(TOC), 왼쪽 전용.
+// 사용자 결정: TOC 드로어는 diff 모드에서 왼쪽 창에만 나타난다. 오른쪽 파일은 "비교 대상"일 뿐
+// 사용자가 순서대로 읽어 내려가는 주 문서가 아니므로, 오른쪽에 별도 TOC를 붙이면 두 개의 드로어가
+// 화면을 잡아먹으면서도 어느 쪽을 봐야 할지 헷갈리게 만든다. 그래서 오른쪽 드로어 자체를 없앴다.
+// 파서는 순수 함수(단위 테스트 대상), createMdToc는 왼쪽 diff 에디터의 드로어 렌더만 담당한다.
 // languageMap.js처럼 module.exports 라 node 단위 테스트가 require 할 수 있고,
 // app.js는 esbuild 번들에서 ESM import로 가져온다(document는 createMdToc 호출 시점에만 참조).
 
@@ -41,12 +44,11 @@ function buildTree(heads) {
   return root.children;
 }
 
-// side별 드로어 렌더러. leftEl/rightEl은 index.html의 .md-toc div.
+// 왼쪽 드로어 렌더러. leftEl은 index.html의 #md-toc-left(.md-toc) div.
 // diffEditor의 모델 인스턴스는 고정 재사용(setValue)이므로, onDidChangeContent를 최초 1회만
 // 구독하고 300ms 디바운스로 onChange를 통해 앱에 알린다(앱이 표시 규칙을 판단해 render 재호출).
-function createMdToc(editorApi, { leftEl, rightEl, onChange } = {}) {
-  const els = { left: leftEl, right: rightEl };
-  const timers = { left: 0, right: 0 };
+function createMdToc(editorApi, { leftEl, onChange } = {}) {
+  let timer = 0;
 
   function empty() {
     const d = document.createElement('div');
@@ -56,7 +58,8 @@ function createMdToc(editorApi, { leftEl, rightEl, onChange } = {}) {
   }
 
   // 트리를 toc-item/toc-toggle/toc-title/toc-kids 구조로 렌더(접기/펼치기 UX는 PDF 목차와 동일).
-  function renderTree(nodes, side) {
+  // side가 사라져 항상 왼쪽 에디터로 고정 이동한다.
+  function renderTree(nodes) {
     const frag = document.createDocumentFragment();
     for (const n of nodes) {
       const row = document.createElement('div');
@@ -68,7 +71,7 @@ function createMdToc(editorApi, { leftEl, rightEl, onChange } = {}) {
       title.textContent = n.title || '(제목 없음)';
       row.append(tog, title);
       row.addEventListener('click', () => {
-        const ed = editorApi.innerOf(side);
+        const ed = editorApi.innerOf('left');
         ed.revealLineNearTop(n.line);
         ed.setPosition({ lineNumber: n.line, column: 1 });
         ed.focus();
@@ -77,7 +80,7 @@ function createMdToc(editorApi, { leftEl, rightEl, onChange } = {}) {
       if (n.children.length) {
         const kids = document.createElement('div');
         kids.className = 'toc-kids';
-        kids.appendChild(renderTree(n.children, side));
+        kids.appendChild(renderTree(n.children));
         frag.appendChild(kids);
         tog.textContent = '▾';
         tog.addEventListener('click', (e) => {
@@ -90,21 +93,22 @@ function createMdToc(editorApi, { leftEl, rightEl, onChange } = {}) {
   }
 
   // show=false면 드로어를 숨기고(클래스 제거), show=true면 현재 내용으로 다시 렌더한다.
-  function render(side, show) {
-    const el = els[side];
-    if (!el) return;
-    el.classList.toggle('show', !!show);
+  // 시그니처를 render(side, show)에서 render(show)로 바꿨다: 드로어가 왼쪽 하나뿐이라 side 인자는
+  // 항상 'left' 고정값만 넘어오는 죽은 매개변수가 된다. 호출부(app.js)가 side별로 두 번 부르던
+  // 코드도 한 번으로 줄어 "왼쪽 전용"이라는 불변조건이 호출부 시그니처에도 드러난다.
+  function render(show) {
+    if (!leftEl) return;
+    leftEl.classList.toggle('show', !!show);
     if (!show) return; // 숨김 상태의 내용은 재렌더하지 않는다(다음 표시 때 새로 그린다)
-    const heads = parseMdHeadings(editorApi.getValue(side));
-    el.replaceChildren(heads.length ? renderTree(buildTree(heads), side) : empty());
+    const heads = parseMdHeadings(editorApi.getValue('left'));
+    leftEl.replaceChildren(heads.length ? renderTree(buildTree(heads)) : empty());
   }
 
-  for (const side of ['left', 'right']) {
-    editorApi.modelOf(side).onDidChangeContent(() => {
-      clearTimeout(timers[side]);
-      timers[side] = setTimeout(() => onChange && onChange(side), 300);
-    });
-  }
+  // 오른쪽 문서가 바뀌어도 왼쪽 TOC는 바뀔 이유가 없으므로 왼쪽 모델만 구독한다.
+  editorApi.modelOf('left').onDidChangeContent(() => {
+    clearTimeout(timer);
+    timer = setTimeout(() => onChange && onChange(), 300);
+  });
 
   return { render };
 }
