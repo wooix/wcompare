@@ -42,10 +42,10 @@ async function openPdfMode(tag) {
   await win.waitForSelector('#toolbar', { timeout: 20000 });
   // 대형 번들(app.js)은 정적 #toolbar보다 늦게 실행된다 → 핸들러가 붙을 때까지 기다린다.
   await win.waitForFunction(
-    () => typeof document.getElementById('btn-mode').onclick === 'function', null, { timeout: 20000 });
+    () => typeof document.getElementById('btn-mode-pdf').onclick === 'function', null, { timeout: 20000 });
   await setStorage(app, storageDir);
   // 앱은 PDF 모드로 시작한다. 혹시 diff 상태면(모드 기본값이 바뀌어도 이 테스트가 버티도록) 한 번 눌러 전환한다.
-  if (await win.evaluate(() => window.__wc.getMode()) !== 'pdf') await win.click('#btn-mode');
+  if (await win.evaluate(() => window.__wc.getMode()) !== 'pdf') await win.click('#btn-mode-pdf');
   await expect(win.locator(`${L} .pdf-url-input`)).toBeVisible();
   return { dir, storageDir, app, win };
 }

@@ -8,6 +8,7 @@ import { setupDnd } from './dnd.js';
 import { createDualView } from './pdfDualView.js';
 import { createSummaryPanel } from './summaryPanel.js';
 import { createPaneSplit } from './paneSplit.js';
+import { createMemoView } from './memoView.js';
 import { flattenOutline, sectionRanges, sectionsDigest, outlineDigest } from './pdfOutline.js';
 import { createMdToc } from './mdToc.js';
 import { normalizeEvent, hasModifier, format as fmtShortcut, isReserved, ACTIONS } from './shortcuts.js';
@@ -79,6 +80,12 @@ let mode = 'diff';
 let dualView = null;
 let summaryPanel = null;
 let paneSplit = null; // 요약 폭 드래그 손잡이 — dualView와 요약 패널이 생긴 뒤에 만들어진다
+let memoView = null; // memo 모드 3열 뷰 — 처음 memo 모드에 들어갈 때 만든다
+// 메모 번역 진행 상태. PDF 번역(translating/translateStart/translateTimer)과 같은 짜임이다 —
+// 같은 종류의 기다림이라 표현도 같아야 한다는 것이 이 앱의 방침이다.
+let memoTranslating = false;
+let memoTranslateStart = 0;
+let memoTranslateTimer = 0;
 const pdfPaths = { left: null, right: null };
 let pdfState = null;
 
@@ -90,8 +97,8 @@ let pdfState = null;
 // 새 필드를 넣으면 구버전 앱과의 호환을 따로 정해야 하는데, 보기 형태는 문서가 아니라 "지금 이 창의
 // 취향"에 가깝다(Night/Dict 토글과 같은 성격).
 const LAYOUTS = ['compare', 'summary', 'full'];
-const SUMMARY_KINDS = ['overview', 'sections', 'flow'];
-const SUMMARY_LABEL = { overview: 'Overview', sections: '절별 요약', flow: '흐름도' };
+const SUMMARY_KINDS = ['overview', 'narrative', 'sections', 'flow'];
+const SUMMARY_LABEL = { overview: 'Overview', narrative: '핵심 정리', sections: '절별 요약', flow: '흐름도' };
 let layout = 'compare';
 try { const v = localStorage.getItem('wc-layout'); if (LAYOUTS.includes(v)) layout = v; } catch { /* 스토리지 불가 */ }
 
@@ -211,16 +218,21 @@ function setMode(m) {
   // #diff-wrap 전체를 토글해야 좌/우 md TOC 드로어도 에디터와 함께 사라진다.
   $('diff-wrap').style.display = m === 'diff' ? 'flex' : 'none';
   $('pdfview').style.display = m === 'pdf' ? 'flex' : 'none';
+  $('memoview').style.display = m === 'memo' ? 'flex' : 'none';
   // 'contents' — 이 묶음 자체는 상자를 만들지 않고 안의 버튼들이 툴바의 flex 항목이 된다.
   // 그래야 툴바가 버튼 단위로 두 줄로 접힌다('flex'면 묶음이 통째로 한 항목이라 접히지 않는다).
   $('diff-controls').style.display = m === 'diff' ? 'contents' : 'none';
   $('pdf-controls').style.display = m === 'pdf' ? 'contents' : 'none';
+  $('memo-controls').style.display = m === 'memo' ? 'contents' : 'none';
   $('statusbars').style.display = m === 'diff' ? 'flex' : 'none';
   $('pdf-status').style.display = m === 'pdf' ? 'flex' : 'none';
-  $('btn-mode').textContent = m === 'diff' ? 'PDF Mode' : 'Diff Mode';
+  $('memo-status').style.display = m === 'memo' ? 'flex' : 'none';
+  for (const k of ['diff', 'pdf', 'memo']) $(`btn-mode-${k}`).classList.toggle('on', m === k);
   if (m === 'diff') refreshStatus(); else setStatus('');
   resetDict(); // 모드가 바뀌면 선택 컨텍스트가 달라지므로 중복 전송 기준을 리셋한다
   if (m === 'pdf') applyLayout(); // 숨어 있는 동안 밀린 흐름도 렌더도 여기서 깨어난다
+  // Monaco는 숨어 있는 동안 폭을 0으로 재 둔다 → 드러나는 순간 다시 재게 한다.
+  if (m === 'memo') { ensureMemoView(); memoView.layout(); refreshMemoBtns(); }
   updatePdfBtns();
   updateTocBtn();
 }
@@ -775,7 +787,9 @@ async function closeFile(side) {
 // ===== toolbar wiring (by id) =====
 $('btn-open-left').onclick = () => openByDialog('left');
 $('btn-open-right').onclick = () => openByDialog('right');
-$('btn-mode').onclick = () => { ensureDualView(); setMode(mode === 'diff' ? 'pdf' : 'diff'); };
+$('btn-mode-diff').onclick = () => setMode('diff');
+$('btn-mode-pdf').onclick = () => { ensureDualView(); setMode('pdf'); };
+$('btn-mode-memo').onclick = () => { ensureMemoView(); setMode('memo'); };
 $('btn-save').onclick = () => save();
 $('btn-prev-diff').onclick = () => editorApi.goToDiff('previous');
 $('btn-next-diff').onclick = () => editorApi.goToDiff('next');
@@ -847,6 +861,173 @@ $('set-storage-change').onclick = async () => {
 };
 $('settings-close').onclick = () => { endShortcutCapture(); $('settings-dialog').close(); };
 $('set-pdf-default').onclick = () => setPdfDefault();
+// ===== memo 모드 =====
+// 경로는 하나도 만들지 않는다. main이 memos/ 아래로만 만들어 allowPath에 등록한 것을 받아,
+// 그 값을 그대로 file:read/file:write에 되돌려 준다 — 이 앱의 allowlist 원칙 그대로다.
+function ensureMemoView() {
+  if (memoView) return memoView;
+  memoView = createMemoView($('memoview'), {
+    onDirty: () => refreshMemoBtns(),
+    onFocus: () => refreshMemoBtns(),
+  });
+  return memoView;
+}
+
+// 저장 대상은 '지금 포커스가 있는 에디터'다. 두 문서가 각각 dirty를 갖는다.
+function memoTargetSide() {
+  const f = memoView?.focusedSide();
+  return f === 'translation' && memoView.isShowTrans() ? 'translation' : 'source';
+}
+
+function refreshMemoBtns() {
+  if (!memoView || mode !== 'memo') return;
+  const src = memoView.getDoc('source');
+  const dirty = memoView.isDirty();
+  const busy = memoTranslating;
+
+  // 번역 버튼은 PDF와 같이 '실행/취소' 토글이다 — 진행 중에 누르면 취소된다.
+  const t = $('btn-memo-translate');
+  t.disabled = !busy && !src.path;
+  t.textContent = busy ? '번역 취소' : '한국어 번역 ▶';
+  t.title = busy ? '진행 중인 번역을 취소합니다'
+    : src.path ? '메모 전체를 한국어로 번역해 번역창에 넣습니다'
+      : '메모를 먼저 만들거나 여세요';
+
+  // 번역 중에 잠그는 것들 — 왜 잠겼는지를 툴팁으로 말해 준다(PDF의 관용구).
+  $('btn-memo-save').disabled = busy || !src.path || !dirty;
+  $('btn-memo-new').disabled = busy;
+  $('memo-list').disabled = busy;
+  $('btn-memo-swap').disabled = busy || !memoView.isShowTrans();
+  $('btn-memo-swap').title = busy ? '번역 중에는 교체할 수 없습니다'
+    : memoView.isShowTrans() ? '원문과 번역본의 좌우를 바꿉니다' : '번역창을 열어야 바꿀 수 있습니다';
+  $('btn-memo-toggle-trans').disabled = busy; // 결과가 들어갈 자리를 도중에 닫지 못하게
+
+  $('btn-memo-toggle-trans').classList.toggle('on', memoView.isShowTrans());
+  $('btn-memo-toggle-preview').classList.toggle('on', memoView.isShowPreview());
+  const main = memoView.mainSide() === 'translation' ? '번역본' : '원문';
+  $('memo-status').textContent = src.path
+    ? `${src.name}${dirty ? ' •' : ''}   메인: ${main}`
+    : '메모를 새로 만들거나 목록에서 여세요';
+}
+
+// 진행 표시. PDF는 페이지 수로 분모를 알지만 메모 번역은 LLM 호출 1회라 진행 단위가 없다 →
+// ratio를 넘기지 않아 막대가 숨고(불확정), 대신 경과 시간을 매초 갱신해 "멈춘 것이 아님"을 보인다.
+function showMemoTranslateProgress() {
+  if (!memoView || !memoTranslating) return;
+  const sec = memoTranslateStart ? (Date.now() - memoTranslateStart) / 1000 : 0;
+  memoView.setBusy({
+    title: '한국어 번역 중…',
+    sub: '문서 전체',
+    hint: `경과 ${fmtDuration(sec)} · 남은 시간은 문서 길이에 따라 다릅니다`,
+  });
+}
+
+async function refreshMemoList() {
+  const sel = $('memo-list');
+  try {
+    const items = await window.wcompare.memo.list();
+    sel.replaceChildren(new Option('메모 열기…', ''));
+    for (const m of items) sel.appendChild(new Option(m.name, m.path));
+  } catch (e) {
+    console.warn('메모 목록 실패(무시):', e?.message || e);
+  }
+}
+
+// 원문과 그 번역본을 함께 연다. 번역본이 아직 없으면 번역창은 비워 둔다.
+async function openMemo(p) {
+  ensureMemoView();
+  const f = await window.wcompare.readFile(p);
+  memoView.setDoc('source', { path: f.path, name: f.path.split('/').pop().replace(/\.md$/i, ''), content: f.content, eol: f.eol, bom: f.bom });
+  const koPath = await window.wcompare.memo.translationPath(f.path);
+  try {
+    const ko = await window.wcompare.readFile(koPath);
+    memoView.setDoc('translation', { path: ko.path, name: '번역본', content: ko.content, eol: ko.eol, bom: ko.bom });
+  } catch {
+    // 아직 번역본 파일이 없다 — 정상이다. 경로만 들고 있다가 저장할 때 만든다.
+    memoView.setDoc('translation', { path: koPath, name: '번역본', content: '' });
+  }
+  refreshMemoBtns();
+  memoView.focus('source');
+}
+
+async function saveMemo(side) {
+  const doc = memoView.getDoc(side);
+  if (!doc.path) return;
+  await window.wcompare.writeFile({
+    path: doc.path, content: memoView.getValue(side), eol: doc.eol, bom: doc.bom,
+  });
+  memoView.setSaved(side);
+  refreshMemoBtns();
+}
+
+// 미저장분을 전부 저장한다(⌘S와 종료 팝업이 함께 쓴다).
+async function saveAllMemo() {
+  for (const side of ['source', 'translation']) {
+    if (memoView?.getDoc(side).dirty) await saveMemo(side);
+  }
+}
+
+$('btn-memo-new').onclick = async () => {
+  ensureMemoView();
+  setMode('memo');
+  const m = await window.wcompare.memo.create('무제');
+  await openMemo(m.path);
+  await refreshMemoList();
+};
+
+$('memo-list').onchange = async (e) => {
+  const p = e.target.value;
+  e.target.value = '';
+  if (!p) return;
+  setMode('memo');
+  await openMemo(p).catch((err) => setStatus(`메모 열기 실패: ${ipcMessage(err)}`));
+};
+
+$('btn-memo-save').onclick = () => saveMemo(memoTargetSide()).catch((e) => setStatus(ipcMessage(e)));
+$('btn-memo-toggle-trans').onclick = () => { memoView.setShowTrans(!memoView.isShowTrans()); refreshMemoBtns(); };
+$('btn-memo-toggle-preview').onclick = () => { memoView.setShowPreview(!memoView.isShowPreview()); refreshMemoBtns(); };
+$('btn-memo-swap').onclick = () => { memoView.swap(); refreshMemoBtns(); };
+
+// PDF의 translatePdf와 같은 짜임: 진행 중이면 취소, 아니면 시작. 오버레이는 결과가 들어올
+// 번역창 위에 띄우고, 매초 경과 시간을 갱신한다. 실패는 alert — PDF 번역과 같은 자리, 같은 방식.
+async function translateMemo() {
+  if (memoTranslating) { await window.wcompare.memo.cancelTranslate(); return; }
+  const src = memoView?.getDoc('source');
+  if (!src?.path) return;
+  // 결정 8: 번역본이 마지막 번역 이후 사람 손을 탔을 때만 되묻는다. 안 건드렸으면 조용히 진행.
+  if (memoView.translationEdited()
+      && !confirm('번역본을 손본 내용이 사라집니다. 다시 번역할까요?')) return;
+
+  memoTranslating = true;
+  memoTranslateStart = Date.now();
+  memoView.setShowTrans(true); // 결과가 들어갈 자리를 미리 열어 준다(오버레이도 그 위에 뜬다)
+  refreshMemoBtns();
+  showMemoTranslateProgress();
+  clearInterval(memoTranslateTimer);
+  memoTranslateTimer = setInterval(() => { if (memoTranslating) showMemoTranslateProgress(); }, 1000);
+  try {
+    const { content, truncated } = await window.wcompare.memo.translate({
+      path: src.path, content: memoView.getValue('source'),
+    });
+    memoView.markTranslated(content);
+    setStatus(truncated
+      ? '번역 완료 — 원문이 길어 일부만 번역했습니다. 저장하지 않으면 사라집니다'
+      : '번역 완료 — 저장하지 않으면 사라집니다');
+  } catch (e) {
+    alert('번역 실패: ' + ipcMessage(e));
+  } finally {
+    clearInterval(memoTranslateTimer);
+    memoView.setBusy(null);
+    memoTranslating = false;
+    memoTranslateStart = 0;
+    refreshMemoBtns();
+  }
+}
+
+$('btn-memo-translate').onclick = () => translateMemo();
+
+refreshMemoList();
+
 // 툴바 톱니 버튼 — 메뉴(File → Settings…)와 같은 openSettings 경로를 탄다(값 채우기 포함).
 $('btn-settings').onclick = () => openSettings();
 
@@ -1395,4 +1576,8 @@ refreshStatus();
 loadUserSettings(); // 저장된 단축키·테마를 로드(비동기 — 실패 시 기본값 유지)
 
 // e2e 테스트 훅 — 렌더러 내부 상태를 읽기 전용으로 노출한다(외부 네트워크·경로 생성과 무관).
-window.__wc = { editorApi, getMode: () => mode, isMdTocOpen: () => mdTocOpen, isDictOn: () => dictOn, dictCalls: () => dictExternalCalls, getShortcuts: () => ({ ...shortcuts }), isNight: () => night, getLayout: () => layout, summaryTab: () => summaryPanel?.getTab() ?? null };
+window.__wc = { editorApi, getMode: () => mode, isMdTocOpen: () => mdTocOpen, isDictOn: () => dictOn, dictCalls: () => dictExternalCalls, getShortcuts: () => ({ ...shortcuts }), isNight: () => night, getLayout: () => layout, summaryTab: () => summaryPanel?.getTab() ?? null,
+  // memo 모드 관찰 창구. 스왑이 '배치만' 바꾸는지 확인하려면 각 에디터의 값을 side로 직접
+  // 읽어야 한다 — 화면 위치로는 두 구현(배치 교환 / 내용 교환)을 구별할 수 없다.
+  memoValue: (side) => memoView?.getValue(side) ?? null,
+  memoMain: () => memoView?.mainSide() ?? null };

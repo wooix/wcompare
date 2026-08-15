@@ -1,4 +1,4 @@
-// src/main/summaryExport.js — 요약 탭(overview/sections/flow) 내용을 내보낼 때 쓰는 순수 로직.
+// src/main/summaryExport.js — 요약 탭(overview/narrative/sections/flow) 내용을 내보낼 때 쓰는 순수 로직.
 // electron 미의존(단위 테스트 가능) — ipc.js가 이 모듈을 불러 IPC 핸들러에서 쓴다.
 //
 // 신뢰 경계: parts/title/docPath는 전부 렌더러가 보낸 값이라 신뢰하지 않는다.
@@ -15,10 +15,10 @@
 //     sanitizeFileNamePart를 거쳐 보장한다.
 const path = require('node:path');
 
-const KINDS = ['overview', 'sections', 'flow'];
-const TAB_LABEL = { overview: 'Overview', sections: '절별 요약', flow: '흐름도' };
+const KINDS = ['overview', 'narrative', 'sections', 'flow'];
+const TAB_LABEL = { overview: 'Overview', narrative: '핵심 정리', sections: '절별 요약', flow: '흐름도' };
 // 파일명 접미사. 한글이어도 macOS 파일시스템엔 안전하지만 공백은 보기 나쁘니 뺀다.
-const TAB_SUFFIX = { overview: 'overview', sections: '절별요약', flow: '흐름도' };
+const TAB_SUFFIX = { overview: 'overview', narrative: '핵심정리', sections: '절별요약', flow: '흐름도' };
 
 // 내보낼 문서(마크다운 전체, mermaid 펜스 포함) 상한. 파트 하나(summaryStore.MAX_PART_CHARS)가
 // 20만자, 세 파트를 다 담아도 60만자 남짓 + 헤딩 몇 줄이다. ipc.js의 두 핸들러(export-text/export)가

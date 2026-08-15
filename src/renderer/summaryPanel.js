@@ -1,4 +1,4 @@
-// src/renderer/summaryPanel.js — 논문 요약 패널(Overview / 절별 요약 / 흐름도 3탭).
+// src/renderer/summaryPanel.js — 논문 요약 패널(Overview / 핵심 정리 / 절별 요약 / 흐름도 4탭).
 //
 // 상태는 전부 클로저에 두고 밖으로는 함수만 노출한다(pdfDualView의 createBusy/createUrlPanel 관용구).
 // 요약을 "만드는" 일은 콜백(onGenerate/onRegenerate)에 통째로 위임하고, 이 모듈은 표시와
@@ -7,8 +7,12 @@ import { renderMarkdown } from './markdownView.js';
 import { renderMermaid, setMermaidTheme } from './mermaidLoader.js';
 import { createSummaryToc } from './summaryToc.js';
 
+// 탭 순서 = 읽는 순서. Overview(30초 판단) → 핵심 정리(통독) → 절별 요약(찾아보기) → 흐름도(그림).
+// '핵심 정리'는 절 구조가 아니라 논리 흐름(문제→한계→아이디어→동작→검증→결과→남은 것)을 따른다 —
+// 이름을 '흐름 요약'으로 하지 않은 이유는 옆의 '흐름도'와 한 글자 차이라 매번 헷갈리기 때문이다.
 const TABS = [
   { kind: 'overview', label: 'Overview' },
+  { kind: 'narrative', label: '핵심 정리' },
   { kind: 'sections', label: '절별 요약' },
   { kind: 'flow', label: '흐름도' },
 ];
@@ -177,7 +181,7 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, o
   go.textContent = '논문 요약 생성';
   const emptyHint = document.createElement('div');
   emptyHint.className = 'sum-empty-hint';
-  emptyHint.textContent = '원문 전체를 읽어 개요·절별 요약·흐름도를 만듭니다 (문서가 길면 시간이 걸립니다)';
+  emptyHint.textContent = '원문 전체를 읽어 개요·핵심 정리·절별 요약·흐름도를 만듭니다 (문서가 길면 시간이 걸립니다)';
   empty.append(emptyTitle, go, emptyHint);
 
   el.append(tabbar, acts, content, err, empty);

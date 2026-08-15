@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  flattenOutline, sectionRanges, sectionsDigest, outlineDigest,
+  flattenOutline, sectionRanges, sectionsDigest, outlineDigest, findAppendixStart, markAppendix,
 } = require('../src/renderer/pdfOutline.js');
 
 // ---------------------------------------------------------------------------
@@ -264,4 +264,81 @@ test('outlineDigest: 빈 입력은 빈 문자열', () => {
   assert.equal(outlineDigest([]), '');
   assert.equal(outlineDigest(null), '');
   assert.equal(outlineDigest(undefined), '');
+});
+
+// ---------------------------------------------------------------------------
+// 부록 판정 (findAppendixStart / markAppendix)
+// ---------------------------------------------------------------------------
+// 왜 위치로 판정하나: LaTeX 부록은 'A Mathematical Derivations'처럼 문자 번호를 달고 오는데,
+// 그 모양이 'A Survey of Methods' 같은 멀쩡한 제목과 구분되지 않는다. 제목 정규식으로 가르려다
+// 본문을 통째로 부록으로 만드는 사고가 나므로, 본문 마지막 장 뒤라는 위치를 주 신호로 쓴다.
+
+const R = (title, depth = 1) => ({ title, depth, startPage: 1, endPage: 2 });
+
+test('findAppendixStart: 결론 뒤의 최상위 절부터 부록이다', () => {
+  const flat = [R('Introduction'), R('Experiments'), R('Discussion'), R('Mathematical Derivations')];
+  assert.equal(findAppendixStart(flat), 3);
+});
+
+test('findAppendixStart: 결론 장의 하위 절은 아직 본문이다', () => {
+  const flat = [R('Introduction'), R('Conclusion'), R('Limitations', 2), R('Proofs')];
+  assert.equal(findAppendixStart(flat), 3); // Limitations(depth 2)가 아니라 Proofs부터
+});
+
+test("findAppendixStart: 절마다 'Discussion'이 있어도 마지막 것을 기준으로 잡는다", () => {
+  // 처음 만난 것을 쓰면 본문 한가운데서 부록이 시작돼 버린다.
+  const flat = [R('Introduction'), R('Discussion'), R('Method'), R('Discussion'), R('Appendix A')];
+  assert.equal(findAppendixStart(flat), 4);
+});
+
+test("findAppendixStart: 제목에 'Appendix'/'부록'이 명시되면 위치보다 우선한다", () => {
+  const flat = [R('Introduction'), R('Appendix A: Proofs'), R('Discussion')];
+  assert.equal(findAppendixStart(flat), 1);
+  assert.equal(findAppendixStart([R('서론'), R('부록 A')]), 1);
+});
+
+test('findAppendixStart: 부록이 없으면 -1 (결론이 마지막 장이거나 결론 자체가 없을 때)', () => {
+  assert.equal(findAppendixStart([R('Introduction'), R('Conclusion')]), -1);
+  assert.equal(findAppendixStart([R('Introduction'), R('Method')]), -1);
+  assert.equal(findAppendixStart([]), -1);
+  assert.equal(findAppendixStart(null), -1);
+});
+
+test("findAppendixStart: 'A Survey of Methods'처럼 문자로 시작하는 본문 제목을 부록으로 오인하지 않는다", () => {
+  // 제목 정규식만 썼다면 여기가 통째로 부록이 됐을 자리다.
+  const flat = [R('A Survey of Methods'), R('B Comparison'), R('Method')];
+  assert.equal(findAppendixStart(flat), -1);
+});
+
+test('markAppendix: 시작 지점부터 끝까지 표시하고 입력을 변형하지 않는다', () => {
+  const flat = [R('Intro'), R('Discussion'), R('Proofs'), R('Details', 2)];
+  const out = markAppendix(flat);
+  assert.deepEqual(out.map((x) => x.appendix), [false, false, true, true]);
+  assert.ok(!('appendix' in flat[0]), '원본을 건드리지 않아야 한다');
+});
+
+test('outlineDigest: 부록은 A/B 문자로 매기고 [부록] 표시를 붙인다', () => {
+  // 논문에서 부록은 A, B로 매겨진다. 예전에는 depth 순서상 다음 숫자가 붙어 실제 논문과 어긋났다.
+  const ranges = [
+    { title: 'Introduction', depth: 1, startPage: 1, endPage: 2 },
+    { title: 'Discussion', depth: 1, startPage: 2, endPage: 3 },
+    { title: 'Mathematical Derivations', depth: 1, startPage: 3, endPage: 4 },
+    { title: 'Proof of Lemma 1', depth: 2, startPage: 4, endPage: 5 },
+    { title: 'Hyperparameters', depth: 1, startPage: 5, endPage: 6 },
+  ];
+  assert.equal(outlineDigest(ranges), [
+    '1. Introduction (p.1)',
+    '2. Discussion (p.2)',
+    '[부록] A. Mathematical Derivations (p.3)',
+    '  [부록] A.1. Proof of Lemma 1 (p.4)',
+    '[부록] B. Hyperparameters (p.5)',
+  ].join('\n'));
+});
+
+test('outlineDigest: 부록이 없으면 예전처럼 숫자만 이어진다', () => {
+  const ranges = [
+    { title: 'Introduction', depth: 1, startPage: 1, endPage: 2 },
+    { title: 'Conclusion', depth: 1, startPage: 2, endPage: 3 },
+  ];
+  assert.equal(outlineDigest(ranges), '1. Introduction (p.1)\n2. Conclusion (p.2)');
 });

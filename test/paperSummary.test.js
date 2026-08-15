@@ -140,9 +140,18 @@ test('buildPrompt: kind별 필수 지시문', () => {
   assert.ok(overview.includes('30초'));
 
   const sections = buildPrompt('sections', doc);
-  assert.ok(sections.includes("'## 제목' 헤딩"));
-  assert.ok(sections.includes('3~6문장'));
-  assert.ok(sections.includes('해석'));
+  // 예전 지시문("'## 제목' 헤딩", '3~6문장', '해석')은 모델이 열거를 굵은 소제목으로 바꿔 내는
+  // 문제가 있어 다시 썼다. 지금 계약의 뼈대는 "굵은 한 줄 요지"와 "구조 이야기 금지"다.
+  assert.ok(sections.includes('굵게'));
+  assert.ok(sections.includes('이어 읽어도'));
+  assert.ok(sections.includes('구조에 대한 이야기는 쓰지 않는다'));
+  assert.ok(sections.includes('[부록]'), '부록 절을 짧게 쓰라는 지시가 있어야 한다');
+
+  // 핵심 정리: 절 구조가 아니라 논리 흐름을 따른다.
+  const narrative = buildPrompt('narrative', doc);
+  assert.ok(narrative.includes('## 무엇이 문제였나'));
+  assert.ok(narrative.includes('## 무엇이 남았나'));
+  assert.ok(narrative.includes('절 구조를 따르지 말고'));
 
   const flow = buildPrompt('flow', doc);
   assert.ok(flow.includes('mermaid 코드블록 하나만'));
@@ -595,11 +604,12 @@ test('제어문자: 정화한 인자를 spawn이 실제로 받아들인다', () 
 // (2)를 놓치면 설정창이 "무엇이든 프롬프트에 실을 수 있는 구멍"이 된다 — 본문과 같은 인자로
 // 나가므로 컨텍스트 한도를 넘겨 요약 세 개가 한꺼번에 죽는다.
 const PROMPT_KEYS = [
-  'common', 'overviewSpec', 'overviewTail', 'sectionsSpec', 'sectionsTail', 'flowSpec', 'flowTail',
+  'common', 'overviewSpec', 'overviewTail', 'narrativeSpec', 'narrativeTail',
+  'sectionsSpec', 'sectionsTail', 'flowSpec', 'flowTail',
 ];
 const DOC = { title: '제목X', outline: '1. 서론\n2. 방법', text: '본문내용ABC' };
 
-test('PROMPT_DEFAULTS: 7칸이 모두 비어 있지 않은 문자열이고 실제 기본 프롬프트와 같다', () => {
+test('PROMPT_DEFAULTS: 모든 칸이 비어 있지 않은 문자열이고 실제 기본 프롬프트와 같다', () => {
   assert.deepEqual(Object.keys(PROMPT_DEFAULTS).sort(), [...PROMPT_KEYS].sort(), '칸이 늘거나 줄면 설정창 UI와 어긋난다');
   for (const key of PROMPT_KEYS) {
     const v = PROMPT_DEFAULTS[key];
@@ -684,7 +694,7 @@ test('buildPrompt override: prompts를 생략하면 예전과 완전히 같은 �
   }
   // 기존 테스트가 지키던 내용이 그대로인지 한 번 더 못박는다.
   const p = buildPrompt('sections', DOC);
-  assert.ok(p.includes('반드시 한국어로 답한다') && p.includes("'## 제목' 헤딩"));
+  assert.ok(p.includes('반드시 한국어로 답한다') && p.includes('굵게'));
   assert.ok(p.split('\n').includes('[목차]') && p.includes('본문내용ABC'));
 });
 

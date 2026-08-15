@@ -28,7 +28,7 @@ const path = require('node:path');
 
 const FORMAT = 'wcompare-summary';
 const VERSION = 1;
-const KINDS = Object.freeze(['overview', 'sections', 'flow']);
+const KINDS = Object.freeze(['overview', 'narrative', 'sections', 'flow']);
 const MAX_PART_CHARS = 200000; // 파트(overview/sections/flow)당 상한 — 20만자
 
 // 결정적 파일명: 정규화 절대경로의 sha1 + 가독성용 basename 접두(파일시스템 안전 문자만, 40자 제한).

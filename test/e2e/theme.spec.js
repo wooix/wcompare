@@ -15,7 +15,7 @@ async function launch(userData) {
   await win.waitForSelector('#toolbar', { timeout: 20000 });
   // 대형 번들(app.js)이 정적 DOM보다 늦게 실행된다 → 초기화가 끝날 때까지 기다린다.
   await win.waitForFunction(
-    () => typeof document.getElementById('btn-mode').onclick === 'function', null, { timeout: 20000 });
+    () => typeof document.getElementById('btn-mode-pdf').onclick === 'function', null, { timeout: 20000 });
   return { app, win };
 }
 

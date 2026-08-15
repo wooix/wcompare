@@ -44,6 +44,7 @@ const DEFAULTS = {
   summaryPrompts: {
     common: '',
     overviewSpec: '', overviewTail: '',
+    narrativeSpec: '', narrativeTail: '',
     sectionsSpec: '', sectionsTail: '',
     flowSpec: '', flowTail: '',
   },
@@ -62,6 +63,8 @@ const set = (patch) => inst().set(patch);
 const SUBDIRS = {
   documents: 'documents', translations: 'translations', projects: 'projects',
   markers: 'markers', downloads: 'downloads', summaries: 'summaries',
+  // memo 모드가 쓰는 메모 원문(.md)과 번역본(.ko.md)이 함께 쌓이는 곳.
+  memos: 'memos',
 };
 function dirFor(kind) {
   const sub = SUBDIRS[kind];

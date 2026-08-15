@@ -19,8 +19,8 @@ test('linter 미설치(PATH 비움)에서도 앱이 크래시 없이 뜨고 diff
   // 앱은 PDF 모드로 시작하므로 diff 편집기를 보려면 모드를 바꾼다.
   // 이 테스트의 관심사는 "linter가 없어도 편집기가 뜨는가"이지 시작 모드가 아니다.
   await win.waitForFunction(
-    () => typeof document.getElementById('btn-mode').onclick === 'function', null, { timeout: 20000 });
-  if (await win.evaluate(() => window.__wc.getMode()) !== 'diff') await win.click('#btn-mode');
+    () => typeof document.getElementById('btn-mode-pdf').onclick === 'function', null, { timeout: 20000 });
+  if (await win.evaluate(() => window.__wc.getMode()) !== 'diff') await win.click('#btn-mode-diff');
   await expect(win.locator('.monaco-diff-editor')).toBeVisible({ timeout: 15000 });
   await app.close();
 });

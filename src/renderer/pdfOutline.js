@@ -111,9 +111,10 @@ function collectPageText(pageTexts, startPage, endPage) {
 
 // 절 하나를 "## N. 제목 (p.시작-끝)\n본문" 블록으로 만든다. 본문이 없으면 제목 줄만 남긴다.
 // 절당 상한(maxCharsPerSection)을 넘으면 잘라내고 잘렸다는 표시를 붙인다.
-function buildSectionBlock(range, index, pageTexts, maxCharsPerSection) {
-  const title = range?.title || '(제목 없음)';
-  const header = `## ${index + 1}. ${title} (${pageRangeLabel(range?.startPage, range?.endPage)})`;
+// 제목은 numberRanges가 미리 매긴 것을 받는다 — 예전에는 여기서 `index+1`로 따로 번호를 붙여,
+// 같은 절을 두고 목차 개요는 '5.1', 본문 재료는 '## 6'이라고 말하는 모순이 프롬프트에 함께 들어갔다.
+function buildSectionBlock(range, pageTexts, maxCharsPerSection) {
+  const header = `## ${range.mark}${range.title} (${pageRangeLabel(range?.startPage, range?.endPage)})`;
   const body = collectPageText(pageTexts, range?.startPage, range?.endPage);
   if (!body) return header;
   const truncated = body.length > maxCharsPerSection;
@@ -125,9 +126,8 @@ function buildSectionBlock(range, index, pageTexts, maxCharsPerSection) {
 // 절당 상한은 절 단위로 먼저 적용하고, 그다음 전체를 이어붙인 결과에 전체 상한을 적용한다
 // (전체 상한 절단은 절 경계를 존중하지 않을 수 있지만, 어차피 프롬프트 재료일 뿐이라 단순함을 우선한다).
 function sectionsDigest(ranges, pageTexts, { maxCharsPerSection = 6000, maxTotalChars = 120000 } = {}) {
-  const list = Array.isArray(ranges) ? ranges : [];
-  const joined = list
-    .map((r, i) => buildSectionBlock(r, i, pageTexts, maxCharsPerSection))
+  const joined = numberRanges(ranges)
+    .map((r) => buildSectionBlock(r, pageTexts, maxCharsPerSection))
     .join('\n\n');
   if (joined.length <= maxTotalChars) return joined;
   return `${joined.slice(0, maxTotalChars)}\n…(전체 길이 제한으로 이후 생략)`;
@@ -147,6 +147,57 @@ function sectionsDigest(ranges, pageTexts, { maxCharsPerSection = 6000, maxTotal
 const NUMBERED_TITLE_RE = /^\d+(?:\.\d+)*[.):]?\s+(?=\S)/;
 function hasOwnNumbering(title) {
   return NUMBERED_TITLE_RE.test(title);
+}
+
+// ===== 부록 판정 =====
+// 왜 필요한가: DPO 논문(arXiv 2305.18290)의 목차 29절 중 16절(55%)이 부록인데, 본문과 똑같은
+// 비중으로 요약돼 "쭉 읽어 내려가면 절반이 부록"이 됐다. 부록임을 표시해 두면 프롬프트가
+// 분량을 줄일 수 있고, 번호도 논문처럼 A/B로 매길 수 있다.
+//
+// 제목만으로는 판정할 수 없다. LaTeX 부록은 'A Mathematical Derivations'처럼 문자 번호를
+// 달고 오는데, 그 모양은 'A Survey of Methods' 같은 멀쩡한 제목과 구분되지 않는다 —
+// 정규식으로 가르려다 논문 본문을 통째로 부록으로 만드는 사고가 난다.
+// 그래서 **위치**를 주 신호로 쓴다: 본문의 마지막 장(결론/논의/참고문헌) 뒤에 오는 것은 부록이다.
+// 제목에 'Appendix'/'부록'이 명시된 경우만 예외적으로 그보다 먼저 부록을 시작시킨다.
+// 뒤에 \b(단어 경계)를 두지 않는다. JS의 \b는 [A-Za-z0-9_] 기준이라 한글 뒤에서는 성립하지
+// 않아 '부록 A'가 통째로 걸리지 않았다(실측). 접두어 일치만으로 충분하다 — 'Supplementary …'로
+// 시작하는 본문 절이 부록으로 잡힐 수는 있지만, 그런 절은 대개 실제로 보충 자료다.
+const APPENDIX_TITLE_RE = /^(appendix|appendices|supplement(ary)?|부록)/i;
+// 본문의 마지막 장으로 흔히 쓰이는 제목. 앞의 절 번호('7. Conclusion')는 있어도 없어도 된다.
+const BODY_END_RE = /^(?:\d+(?:\.\d+)*[.):]?\s+)?(conclusions?|discussions?|concluding\s+remarks|references|bibliography|결론|논의|참고\s*문헌|맺음말)\b/i;
+
+/**
+ * flat에서 부록이 시작하는 인덱스를 찾는다. 없으면 -1.
+ * 논문은 부록에서 본문으로 되돌아오지 않으므로, 한 번 시작하면 그 뒤는 전부 부록이다.
+ * @param {Array} flat flattenOutline 결과
+ * @returns {number}
+ */
+function findAppendixStart(flat) {
+  const list = Array.isArray(flat) ? flat : [];
+  // 1) 제목에 명시된 경우가 가장 확실하다 — 위치와 무관하게 그 지점부터 부록이다.
+  const explicit = list.findIndex((it) => APPENDIX_TITLE_RE.test(String(it?.title || '').trim()));
+  if (explicit >= 0) return explicit;
+  // 2) 위치로 판정: 최상위(depth 1) 중 본문 마지막 장에 해당하는 '마지막' 항목을 찾는다.
+  //    마지막을 쓰는 이유 — 절마다 'Discussion'을 두는 논문이 있어서, 처음 만난 것을 쓰면
+  //    본문 한가운데서 부록이 시작돼 버린다.
+  let bodyEnd = -1;
+  for (let i = 0; i < list.length; i++) {
+    const it = list[i];
+    if ((it?.depth ?? 1) === 1 && BODY_END_RE.test(String(it?.title || '').trim())) bodyEnd = i;
+  }
+  if (bodyEnd < 0) return -1;
+  // 그 장의 하위 절은 아직 본문이다 — 다음 최상위 항목부터 부록으로 본다.
+  for (let i = bodyEnd + 1; i < list.length; i++) {
+    if ((list[i]?.depth ?? 1) === 1) return i;
+  }
+  return -1; // 결론이 마지막 장이면 부록이 없다
+}
+
+// 부록 시작 지점부터 appendix:true를 붙인 새 배열을 돌려준다(입력을 변형하지 않는다).
+function markAppendix(flat) {
+  const list = Array.isArray(flat) ? flat : [];
+  const from = findAppendixStart(list);
+  return list.map((it, i) => ({ ...it, appendix: from >= 0 && i >= from }));
 }
 
 // (스택 기반) depth 시퀀스를 계층 번호(1, 1.1, 1.2, 2, 2.1 …)로 바꾼다.
@@ -186,24 +237,58 @@ function nextSectionNumber(stack, depth) {
 // 있으면(hasOwnNumbering) 우리 번호를 덧붙이지 않고 원문 제목을 그대로 쓴다 — 다만 스택
 // 카운터는 그 항목의 위치만큼 그대로 전진시켜서 다음 형제/자식 번호가 밀리지 않게 한다.
 //
-// 한계: 부록(Appendix)은 논문에서 보통 A, B로 매겨지지만, 우리는 PDF 목차의 depth 정보만
-// 갖고 있어서 "이 항목이 본문 마지막 장인지 부록 시작인지"를 구분할 방법이 없다. 그 결과
-// 부록 첫 절 'Mathematical Derivations'가 실제로는 'Appendix A'인데도 우리 번호로는 그냥
-// depth 순서상 다음 숫자(예: 8)가 매겨진다 — 목차 데이터만으로는 고칠 수 없는 한계이고,
-// 지어내서 해결한 척하지 않는다.
-function outlineDigest(ranges) {
-  const list = Array.isArray(ranges) ? ranges : [];
-  if (!list.length) return '';
+// 부록은 논문 관례대로 A, A.1, B로 매기고 제목 앞에 [부록]을 붙인다(markAppendix가 판정).
+// 예전에는 이것을 "목차 데이터만으로는 고칠 수 없는 한계"로 적어 두었는데, 제목이 아니라
+// **위치**(본문 마지막 장 뒤)를 신호로 쓰면 판정할 수 있다는 것을 알고 고쳤다.
+// [부록] 표시는 프롬프트가 분량을 줄이는 데 쓴다(KIND_SPEC.sections 참고) — 표시 문구를 바꾸면
+// 그쪽 지시문도 함께 바꿔야 한다.
+// 남은 한계: 결론/논의 장이 없는 논문은 부록 시작을 못 찾아 예전처럼 숫자가 이어진다.
+function formatSectionNumber(stack, isAppendix) {
+  const nums = stack.map((e) => e.num);
+  if (!isAppendix || !nums.length) return nums.join('.');
+  const [first, ...rest] = nums;
+  // A~Z를 넘어가면(부록이 27개 이상) 문자로 표현할 수 없다 — 그때는 숫자로 물러난다.
+  if (first > 26) return nums.join('.');
+  return [String.fromCharCode(64 + first), ...rest].join('.');
+}
+
+/**
+ * ranges에 계층 번호·부록 표시를 붙인 새 배열을 돌려준다.
+ * outlineDigest(목차 개요)와 sectionsDigest(본문 재료)가 **같은 번호**를 쓰게 하려고 한 곳에 모았다 —
+ * 갈라져 있던 동안에는 같은 절을 목차는 '5.1', 본문은 '## 6'이라 불러 모델이 어느 쪽을 믿을지
+ * 알 수 없었다.
+ * @returns {Array<{title,mark,level,appendix,startPage,endPage}>} title에는 번호가 이미 붙어 있다
+ */
+function numberRanges(ranges) {
+  const list = markAppendix(Array.isArray(ranges) ? ranges : []);
   const stack = []; // 이 함수 호출 1회 동안만 유지하는 번호 매김 상태(순수 함수 유지를 위해 지역 변수로 둔다)
+  let inAppendix = false;
+  return list.map((r) => {
+    const rawTitle = r?.title || '(제목 없음)';
+    // 부록에 처음 들어서는 순간 카운터를 비운다 — 그래야 첫 부록이 1(=A)부터 시작한다.
+    if (r.appendix && !inAppendix) { stack.length = 0; inAppendix = true; }
+    nextSectionNumber(stack, r?.depth); // 부작용으로 stack을 전진시킨다
+    const number = formatSectionNumber(stack, r.appendix);
+    return {
+      title: hasOwnNumbering(rawTitle) ? rawTitle : `${number}. ${rawTitle}`,
+      mark: r.appendix ? '[부록] ' : '',
+      level: stack.length, // 번호가 실제로 매겨진 유효 깊이(원래 depth가 아니다)
+      appendix: !!r.appendix,
+      startPage: r?.startPage,
+      endPage: r?.endPage,
+    };
+  });
+}
+
+function outlineDigest(ranges) {
+  const list = numberRanges(ranges);
+  if (!list.length) return '';
   return list
-    .map((r) => {
-      const rawTitle = r?.title || '(제목 없음)';
-      const number = nextSectionNumber(stack, r?.depth); // 부작용으로 stack을 전진시킨다
-      const indent = '  '.repeat(Math.max(0, stack.length - 1));
-      const title = hasOwnNumbering(rawTitle) ? rawTitle : `${number}. ${rawTitle}`;
-      return `${indent}${title} (${pageRangeLabel(r?.startPage, r?.endPage)})`;
-    })
+    .map((r) => `${'  '.repeat(Math.max(0, r.level - 1))}${r.mark}${r.title} (${pageRangeLabel(r.startPage, r.endPage)})`)
     .join('\n');
 }
 
-module.exports = { flattenOutline, sectionRanges, sectionsDigest, outlineDigest };
+module.exports = {
+  flattenOutline, sectionRanges, sectionsDigest, outlineDigest,
+  findAppendixStart, markAppendix,
+};

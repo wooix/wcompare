@@ -135,7 +135,32 @@
   #pdf-find-count.miss { color:var(--danger); }
   /* 남는 세로 공간을 전부 차지한다. min-height:0 이 없으면 flex 항목의 기본 최소 크기 때문에
      내용이 넘칠 때 줄어들지 못해 상태줄을 화면 밖으로 밀어낸다. */
-  #diff-wrap, #pdfview { flex: 1 1 auto; min-height: 0; }
+  #diff-wrap, #pdfview, #memoview { flex: 1 1 auto; min-height: 0; }
+  /* ===== memo 모드 =====
+     [에디터 | 번역 | 미리보기] 3열. 번역과 미리보기는 서로 독립적으로 열고 닫는다.
+     보이는 '순서'는 DOM이 아니라 order가 정한다 — 좌우 스왑이 order만 뒤집기 때문이다.
+     DOM을 재배치하지 않는 이유: Monaco를 떼었다 붙이면 스크롤 위치와 커서를 잃는다. */
+  #memoview { display:none; }
+  .memo-view { flex:1; display:flex; min-width:0; height:100%; }
+  /* 두 에디터는 언제나 같은 폭을 나눠 갖는다(flex-basis 0). 미리보기만 사용자가 폭을 조절한다. */
+  .memo-pane { flex:1 1 0; min-width:0; position:relative;
+    border-right:1px solid var(--border-faint); }
+  .memo-preview { flex:0 0 380px; min-width:0; overflow:auto; padding:10px 14px;
+    background:var(--bg-panel); color:var(--fg); font:13px/1.7 sans-serif;
+    border-left:1px solid var(--border-faint); }
+  /* 미리보기는 요약 패널과 같은 마크다운 규칙을 쓴다(markdownView가 만든 표준 태그) */
+  .memo-preview h1, .memo-preview h2, .memo-preview h3 { color:var(--fg-strong); }
+  .memo-preview code { background:var(--bg-code); border-radius:3px; padding:1px 4px; }
+  .memo-preview pre { background:var(--bg-code); border:1px solid var(--border-soft);
+    border-radius:4px; padding:8px; overflow:auto; }
+  .memo-preview blockquote { border-left:3px solid var(--accent-soft); margin:8px 0;
+    padding:2px 0 2px 10px; color:var(--fg-dim); }
+  /* 마지막으로 보이는 열의 오른쪽 테두리는 창 끝과 겹쳐 두 줄로 보인다 */
+  .memo-view:not(.has-preview) .memo-pane[style*="order: 1"] { border-right:none; }
+  #memo-controls { display:flex; align-items:center; gap:6px; color:var(--fg-dim); }
+  #memo-status { display:none; height:22px; flex:0 0 auto; background:var(--bg); color:var(--info);
+    font:12px monospace; align-items:center; padding:0 8px; }
+
   #diff-wrap { display:flex; }
   #editor { flex:1; min-width:0; height:100%; }
   #pdfview { display:none; }
@@ -157,6 +182,10 @@
     background-clip:content-box; border-left:2px solid transparent; border-right:2px solid transparent; }
   .pane-split:hover, .pane-split.dragging { background-color:var(--accent); }
   #pdfview.layout-summary .pdf-pane[data-side=right] { display:none; }
+  #mode-switch { display:inline-flex; }
+  #mode-switch button { border-radius:0; }
+  #mode-switch button:first-child { border-radius:4px 0 0 4px; }
+  #mode-switch button:last-child { border-radius:0 4px 4px 0; }
   #pdf-layout { display:inline-flex; }
   #pdf-layout button { border-radius:0; }
   #pdf-layout button:first-child { border-radius:4px 0 0 4px; }
@@ -256,18 +285,18 @@
   .pdf-close:hover { background:var(--danger-bg); color:var(--accent-fg); }
 
   /* 오래 걸리는 작업(번역)을 해당 pane 위에 겹쳐 표시 */
-  .pdf-busy { position:absolute; inset:0; z-index:5; display:flex; flex-direction:column;
+  .pdf-busy, .memo-busy { position:absolute; inset:0; z-index:5; display:flex; flex-direction:column;
     align-items:center; justify-content:center; gap:8px; background:var(--bg-veil);
     color:var(--fg); font:13px sans-serif; text-align:center; padding:16px; }
-  .pdf-busy-spin { width:26px; height:26px; border:3px solid var(--border); border-top-color:var(--info);
+  .pdf-busy-spin, .memo-busy-spin { width:26px; height:26px; border:3px solid var(--border); border-top-color:var(--info);
     border-radius:50%; animation:pdf-spin 0.9s linear infinite; }
   @keyframes pdf-spin { to { transform:rotate(360deg); } }
-  .pdf-busy-title { font-size:14px; color:var(--fg-strong); }
+  .pdf-busy-title, .memo-busy-title { font-size:14px; color:var(--fg-strong); }
   /* 번역은 "n / N 페이지"처럼 짧지만 URL 다운로드는 긴 주소가 들어온다 → 넘치지 않게 접는다. */
-  .pdf-busy-sub { color:var(--info); font:12px monospace; max-width:90%; word-break:break-all; }
-  .pdf-busy-bar { width:min(260px, 70%); height:4px; background:var(--bg-track); border-radius:2px; overflow:hidden; }
-  .pdf-busy-bar > i { display:block; height:100%; background:var(--info); width:0; transition:width .3s; }
-  .pdf-busy-hint { color:var(--fg-faint); font-size:11px; }
+  .pdf-busy-sub, .memo-busy-sub { color:var(--info); font:12px monospace; max-width:90%; word-break:break-all; }
+  .pdf-busy-bar, .memo-busy-bar { width:min(260px, 70%); height:4px; background:var(--bg-track); border-radius:2px; overflow:hidden; }
+  .pdf-busy-bar > i, .memo-busy-bar > i { display:block; height:100%; background:var(--info); width:0; transition:width .3s; }
+  .pdf-busy-hint, .memo-busy-hint { color:var(--fg-faint); font-size:11px; }
   /* 빈 pane의 "URL로 PDF 열기" — 문서가 로드되면 CSS만으로 사라진다(.loaded는 dualView가 붙인다).
      컨테이너는 pointer-events:none 이라 빈 영역의 드래그&드롭을 가로막지 않고,
      실제로 조작할 입력 행만 pointer-events를 되살린다. */
@@ -503,7 +532,13 @@
   <div id="toolbar">
     <button id="btn-open-left">Open Left</button>
     <button id="btn-open-right">Open Right</button>
-    <button id="btn-mode">PDF Mode</button>
+    <!-- 모드 3종. 예전에는 'PDF Mode' 토글 하나였는데, 셋이 되면 2항 토글이 성립하지 않는다
+         (다음이 무엇인지 라벨로 알 수 없다) → #pdf-layout과 같은 붙은 버튼 묶음으로 바꿨다. -->
+    <span id="mode-switch">
+      <button id="btn-mode-diff" title="파일 비교">비교</button>
+      <button id="btn-mode-pdf" title="PDF 보기">PDF</button>
+      <button id="btn-mode-memo" title="메모 작성">메모</button>
+    </span>
     <button id="btn-toc" title="목차 패널 열기/닫기">TOC</button>
     <button id="btn-dict" title="선택한 영어를 실시간으로 한국어로 번역(사전/엔진)">Dict: OFF</button>
     <span id="diff-controls">
@@ -536,6 +571,15 @@
       <button id="btn-translate">한국어 번역 ▶</button>
       <button id="btn-del-translation">번역본 삭제</button>
     </span>
+    <span id="memo-controls" style="display:none">
+      <button id="btn-memo-new">새 메모</button>
+      <select id="memo-list" title="메모 열기"><option value="">메모 열기…</option></select>
+      <button id="btn-memo-save" title="저장 (⌘S)">저장</button>
+      <button id="btn-memo-translate">한국어 번역</button>
+      <button id="btn-memo-toggle-trans" title="번역창 열기/닫기">번역창</button>
+      <button id="btn-memo-toggle-preview" title="미리보기 열기/닫기">미리보기</button>
+      <button id="btn-memo-swap" title="원문과 번역본의 좌우를 바꿉니다">⇄ Switch</button>
+    </span>
     <span id="toolbar-status" style="margin-left:auto; color:var(--info); font:12px monospace;"></span>
     <!-- 설정 버튼은 툴바의 항상 맨 끝이다: 상태 표시가 margin-left:auto로 우측에 붙으므로 그 뒤에
          두면 PDF 모드(2줄)에서는 둘째 줄 끝, diff 모드(1줄)에서는 줄 끝에 온다. ⚙ 뒤의 FE0E는
@@ -547,8 +591,10 @@
     <div id="editor"></div>
   </div>
   <div id="pdfview"></div>
+  <div id="memoview"></div>
   <div id="statusbars"><div id="vim-left"></div><div id="vim-right"></div></div>
   <div id="pdf-status"></div>
+  <div id="memo-status"></div>
 
   <dialog id="project-name-dialog">
     <form method="dialog">
@@ -657,6 +703,7 @@
 
       <div class="set-subtabs" id="set-prompt-tabs">
         <button type="button" class="set-subtab on" id="set-prompt-tab-overview" data-tab="overview">Overview</button>
+        <button type="button" class="set-subtab" id="set-prompt-tab-narrative" data-tab="narrative">핵심 정리</button>
         <button type="button" class="set-subtab" id="set-prompt-tab-sections" data-tab="sections">절별 요약</button>
         <button type="button" class="set-subtab" id="set-prompt-tab-flow" data-tab="flow">흐름도</button>
       </div>
@@ -675,6 +722,23 @@
             <button type="button" class="set-prompt-reset" data-key="overviewTail">기본값</button>
           </div>
           <textarea class="set-prompt" id="set-prompt-overview-tail" data-key="overviewTail" rows="3" spellcheck="false" maxlength="8000"></textarea>
+        </div>
+      </div>
+
+      <div class="set-prompt-panel" id="set-prompt-panel-narrative" data-tab="narrative">
+        <div class="set-prompt-row">
+          <div class="set-prompt-head">
+            <span>핵심 정리 지시문</span>
+            <button type="button" class="set-prompt-reset" data-key="narrativeSpec">기본값</button>
+          </div>
+          <textarea class="set-prompt" id="set-prompt-narrative-spec" data-key="narrativeSpec" rows="11" spellcheck="false" maxlength="8000"></textarea>
+        </div>
+        <div class="set-prompt-row">
+          <div class="set-prompt-head">
+            <span>핵심 정리 마무리 지시 (본문 뒤에 한 번 더 붙습니다)</span>
+            <button type="button" class="set-prompt-reset" data-key="narrativeTail">기본값</button>
+          </div>
+          <textarea class="set-prompt" id="set-prompt-narrative-tail" data-key="narrativeTail" rows="3" spellcheck="false" maxlength="8000"></textarea>
         </div>
       </div>
 

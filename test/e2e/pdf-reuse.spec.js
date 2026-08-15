@@ -65,9 +65,9 @@ async function launch(tag) {
   const win = await app.firstWindow();
   await win.waitForSelector('#toolbar', { timeout: 20000 });
   await win.waitForFunction(
-    () => typeof document.getElementById('btn-mode').onclick === 'function', null, { timeout: 20000 });
+    () => typeof document.getElementById('btn-mode-pdf').onclick === 'function', null, { timeout: 20000 });
   await setStorage(app, storageDir);
-  if (await win.evaluate(() => window.__wc.getMode()) !== 'pdf') await win.click('#btn-mode');
+  if (await win.evaluate(() => window.__wc.getMode()) !== 'pdf') await win.click('#btn-mode-pdf');
   return { dir, storageDir, countFile, app, win };
 }
 

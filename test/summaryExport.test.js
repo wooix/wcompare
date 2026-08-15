@@ -123,9 +123,9 @@ test('stripOuterFence: 여는/닫는 펜스가 정확히 한 쌍일 때만 벗�
 });
 
 test('KINDS/MAX_EXPORT_CHARS는 다른 모듈과 어긋나지 않는 형태를 유지한다', () => {
-  assert.deepEqual(KINDS, ['overview', 'sections', 'flow']);
-  // 파트 하나 20만자 * 3 + 마크다운 오버헤드보다 넉넉히 커야 한다(summaryStore.MAX_PART_CHARS 참고).
-  assert.ok(MAX_EXPORT_CHARS > 200000 * 3);
+  assert.deepEqual(KINDS, ['overview', 'narrative', 'sections', 'flow']);
+  // 파트 하나 20만자 * 4 + 마크다운 오버헤드보다 넉넉히 커야 한다(summaryStore.MAX_PART_CHARS 참고).
+  assert.ok(MAX_EXPORT_CHARS > 200000 * 4);
 });
 
 // ===== sanitizeExportFileName =====

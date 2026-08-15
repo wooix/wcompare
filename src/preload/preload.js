@@ -52,6 +52,14 @@ contextBridge.exposeInMainWorld('wcompare', {
   },
   // 설정: set으로 넘긴 patch는 main이 키 화이트리스트로 한 번 거른다(보관 폴더는 여기로 못 바꾼다 —
   // pickStorageDir, 즉 main의 dialog를 거쳐야 한다).
+  // memo 모드 — 경로는 전부 main이 만든다. 렌더러는 이름과 '이미 연 경로'만 넘긴다.
+  memo: {
+    list: () => ipcRenderer.invoke('memo:list'),
+    create: (name) => ipcRenderer.invoke('memo:new', name),
+    translationPath: (srcPath) => ipcRenderer.invoke('memo:translation-path', srcPath),
+    translate: (payload) => ipcRenderer.invoke('memo:translate', payload),
+    cancelTranslate: () => ipcRenderer.invoke('memo:translate:cancel'),
+  },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
     set: (patch) => ipcRenderer.invoke('settings:set', patch),

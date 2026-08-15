@@ -12,6 +12,8 @@ const { allowed, openedPdfs, normalize, allowPath } = require('./allowlist.js');
 const { downloadPdf } = require('./pdfDownload.js');
 const { summarize, KINDS: SUMMARY_KINDS, PROMPT_DEFAULTS, MAX_PROMPT_PART_CHARS } = require('./paperSummary.js');
 const summaryStore = require('./summaryStore.js');
+const memoFiles = require('./memoFiles.js');
+const { translateMemo } = require('./memoTranslate.js');
 const {
   buildExportMarkdown, defaultExportFileName, sanitizeExportFileName, MAX_EXPORT_CHARS,
 } = require('./summaryExport.js');
@@ -36,6 +38,7 @@ const jobs = createTranslationJobs();
 // 요약 job도 같은 레지스트리를 쓴다. 창을 닫거나 앱을 끝낼 때 자식 프로세스(agy/claude)를
 // 남기지 않으려면 번역과 똑같이 창별로 추적해야 하기 때문 — 아래 cancel* 함수에서 함께 정리한다.
 const summaryJobs = createTranslationJobs();
+const memoJobs = createTranslationJobs(); // 메모 번역 — 창당 1개, 취소 가능
 
 function readWithPath(p) {
   const meta = readFile(p);
@@ -375,6 +378,49 @@ function registerIpc() {
   // 본문 텍스트는 렌더러가 보낸다: PDF 파싱(pdf.js)이 렌더러에만 있고, 이미 로드된 문서에서
   // 뽑는 편이 main에서 다시 파싱하는 것보다 훨씬 싸다. 경로는 여전히 allowlist로 검문한다
   // — 경로가 곧 캐시 키이자 "이 세션에서 연 PDF인가"의 근거이기 때문.
+  // ===== memo 모드 =====
+  // 경로는 전부 여기서 만든다. 렌더러는 '이름'만 넘기고, 실제 경로는 dirFor('memos') 아래로만
+  // 만들어져 allowPath로 등록된다 — 그래야 file:read/file:write의 allowlist 검문을 통과할 수 있고,
+  // 렌더러가 보낸 문자열이 보관 폴더 밖을 가리킬 방법이 없다.
+  ipcMain.handle('memo:list', () => memoFiles.listMemos(settings.dirFor('memos'))
+    .map((m) => ({ ...m, path: allowPath(m.path) })));
+
+  // 새 메모. 파일을 실제로 만들어 둔다 — 만들지 않으면 저장 전까지 목록에 안 보여
+  // "새로 만들었는데 사라졌다"가 된다.
+  ipcMain.handle('memo:new', (_e, rawName) => {
+    const p = memoFiles.uniqueMemoPath(settings.dirFor('memos'), rawName);
+    fs.writeFileSync(p, '', 'utf8');
+    return { path: allowPath(p), name: path.basename(p).replace(/\.md$/i, '') };
+  });
+
+  // 번역본 경로. 파일을 만들지는 않고 경로만 등록해 준다(저장 시점에 생긴다).
+  ipcMain.handle('memo:translation-path', (_e, rawSrc) => {
+    const src = normalize(rawSrc);
+    if (!allowed.has(src)) throw new Error('memo denied: 이 세션에서 연 메모가 아닙니다');
+    return allowPath(memoFiles.translationPathFor(src));
+  });
+
+  // 번역 실행. 내용은 렌더러가 보낸 '지금 편집 중인 값'을 쓴다 — 저장 전 상태로도 번역할 수
+  // 있어야 하고, 파일을 다시 읽으면 저장 안 된 편집이 빠진 채 번역된다.
+  ipcMain.handle('memo:translate', async (e, { path: rawPath, content } = {}) => {
+    const wcId = e.sender.id;
+    const p = normalize(rawPath);
+    if (!allowed.has(p)) throw new Error('memo translate denied: 이 세션에서 연 메모가 아닙니다');
+    if (memoJobs.has(wcId)) throw new Error('이 창에서 이미 번역이 진행 중입니다');
+    const job = translateMemo(content, { translateSettings: settings.get().translate });
+    memoJobs.add(wcId, p, job);
+    try {
+      return await job.promise;
+    } finally {
+      memoJobs.remove(wcId);
+    }
+  });
+
+  ipcMain.handle('memo:translate:cancel', (e) => {
+    memoJobs.cancel(e.sender.id);
+    return { ok: true };
+  });
+
   ipcMain.handle('pdf:summarize', async (e, { path: rawPath, kind, title, outline, text } = {}) => {
     const wcId = e.sender.id;
     const p = normalize(rawPath);
@@ -531,10 +577,10 @@ function registerOpenInNewWindow(createWindow) {
 
 // 앱 종료 시 호출 — detached로 띄운 transpaper·요약 CLI(및 그 자식 agy/claude)가 살아남지 않도록.
 // 요약도 여기서 함께 정리한다: 같은 detached 관용구라 빠뜨리면 앱을 꺼도 프로세스가 남는다.
-function cancelTranslation() { jobs.cancelAll(); summaryJobs.cancelAll(); }
+function cancelTranslation() { jobs.cancelAll(); summaryJobs.cancelAll(); memoJobs.cancelAll(); }
 
 // 특정 창이 파괴될 때 그 창의 작업만 취소한다(main.js의 webContents 'destroyed' 훅에서 호출).
-function cancelForWebContents(wcId) { jobs.cancel(wcId); summaryJobs.cancel(wcId); }
+function cancelForWebContents(wcId) { jobs.cancel(wcId); summaryJobs.cancel(wcId); memoJobs.cancel(wcId); }
 
 module.exports = {
   registerIpc, allowPath, cancelTranslation, cancelForWebContents, registerOpenInNewWindow,
