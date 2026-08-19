@@ -21,6 +21,7 @@ const { triggerShortcutDict } = require('./shortcutDict.js');
 const markerStore = require('./markerStore.js');
 const project = require('./project.js');
 const recentFiles = require('./recentFiles.js');
+const openFiles = require('./openFiles.js');
 const settings = require('./settings.js');
 const { createTranslationJobs } = require('./translationJobs.js');
 const { getPdfHandler, setPdfHandler } = require('./defaultApp.js');
@@ -416,6 +417,13 @@ function registerIpc() {
     }
   });
 
+  // 지금 이 창에 올라와 있는 파일 목록 — 메뉴가 경로를 보여주기 위한 것.
+  // 렌더러는 상태가 바뀔 만한 자리마다 부담 없이 부르고, 값이 같으면 openFiles가 되돌린다.
+  ipcMain.handle('window:set-open-files', (e, entries) => {
+    openFiles.set(e.sender.id, entries);
+    return { ok: true };
+  });
+
   ipcMain.handle('memo:translate:cancel', (e) => {
     memoJobs.cancel(e.sender.id);
     return { ok: true };
@@ -580,7 +588,12 @@ function registerOpenInNewWindow(createWindow) {
 function cancelTranslation() { jobs.cancelAll(); summaryJobs.cancelAll(); memoJobs.cancelAll(); }
 
 // 특정 창이 파괴될 때 그 창의 작업만 취소한다(main.js의 webContents 'destroyed' 훅에서 호출).
-function cancelForWebContents(wcId) { jobs.cancel(wcId); summaryJobs.cancel(wcId); memoJobs.cancel(wcId); }
+// 창이 사라질 때 호출. 파일 목록도 함께 지운다 — 남겨 두면 다음에 같은 id를 받은 창이
+// 남의 파일 경로를 메뉴에 달고 시작한다.
+function cancelForWebContents(wcId) {
+  jobs.cancel(wcId); summaryJobs.cancel(wcId); memoJobs.cancel(wcId);
+  openFiles.clear(wcId);
+}
 
 module.exports = {
   registerIpc, allowPath, cancelTranslation, cancelForWebContents, registerOpenInNewWindow,

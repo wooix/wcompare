@@ -5,9 +5,10 @@ const {
   registerIpc, cancelTranslation, cancelForWebContents, registerOpenInNewWindow,
 } = require('./ipc');
 const { allowPath } = require('./allowlist');
-const { applyMenu, setHandlers } = require('./menu');
+const { applyMenu, setHandlers, noteFocus } = require('./menu');
 const project = require('./project');
 const { parsePair } = require('./cli');
+const { windowTitle } = require('./version');
 
 app.enableSandbox();
 registerScheme();
@@ -16,6 +17,9 @@ registerScheme();
 function createWindow(pair = { left: null, right: null }) {
   const win = new BrowserWindow({
     width: 1280, height: 800,
+    // index.html에 <title>이 없어야 이 값이 유지된다. 문서 제목이 있으면 Electron이
+    // 그것으로 덮어쓰므로, 제목은 여기 한 곳에서만 정한다.
+    title: windowTitle(),
     // e2e가 돌 때마다 창이 사용자 화면 위로 튀어나와 작업을 방해한다.
     // 숨긴 창도 레이아웃·렌더 경로는 그대로라 크기 측정과 스크린샷이 보이는 창과 동일하게 나온다
     // (실측 확인). WCOMPARE_TRANSPAPER·WCOMPARE_DICT_FAKE와 같은 계열의 테스트 심이다.
@@ -84,6 +88,9 @@ app.whenReady().then(() => {
   registerIpc();
   project.setOnChange(applyMenu); // 최근 목록이 바뀌면 메뉴를 다시 세팅
   require('./recentFiles').setOnChange(applyMenu);
+  require('./openFiles').setOnChange(applyMenu);
+  // 메뉴는 앱에 하나뿐이라 '포커스된 창의 파일'을 보여주려면 창이 바뀔 때 다시 그려야 한다.
+  app.on('browser-window-focus', (_e, win) => { noteFocus(win); applyMenu(); });
   setHandlers({ newWindow: () => createWindow() }); // ⌘N — 빈 창을 새로 연다
   applyMenu();
   // 렌더러가 "이 창엔 자리가 없다"고 알려 오면 새 창에 띄운다. 경로는 여기서 다시 검문한다

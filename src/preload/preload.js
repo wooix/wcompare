@@ -88,6 +88,7 @@ contextBridge.exposeInMainWorld('wcompare', {
   onOpenFiles: (cb) => ipcRenderer.on('open-files', (_e, paths) => cb(paths)),
   // 양쪽 pane이 다 찼을 때 남은 파일을 새 창에 띄워 달라고 청한다(main이 경로를 재검문).
   openInNewWindow: (paths) => ipcRenderer.invoke('window:open-files', paths),
+  setOpenFiles: (entries) => ipcRenderer.invoke('window:set-open-files', entries),
   onProjectLoad: (cb) => ipcRenderer.on('project:load', (_e, p) => cb(p)),
   // 최근 파일: 메뉴 클릭 시 main이 allowlist에 등록한 경로를 보낸다
   onOpenRecentFile: (cb) => ipcRenderer.on('menu:open-recent-file', (_e, p) => cb(p)),

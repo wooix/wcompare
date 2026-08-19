@@ -1,6 +1,7 @@
 {
   "name": "wcompare",
   "version": "0.1.0",
+  "buildVersion": "2026-08-19-003",
   "description": "Simple side-by-side file compare with syntax, lint, vim",
   "main": "src/main/main.js",
   "type": "commonjs",
@@ -10,7 +11,7 @@
     "start": "electron .",
     "test": "node --test test/*.test.js",
     "e2e": "npm run build && playwright test",
-    "package:mac": "npm run build && node scripts/pack-mac.mjs"
+    "package:mac": "node scripts/bump-version.mjs && npm run build && node scripts/pack-mac.mjs"
   },
   "license": "MIT",
   "dependencies": {

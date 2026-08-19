@@ -49,6 +49,7 @@ applyTheme(theme);
 editorApi.onDirty(() => refreshStatus());
 const mark = (s) => (s.path ? (s.dirty ? '● ' : '') + s.path.split('/').pop() : '(empty)');
 function refreshStatus() {
+  syncOpenFiles(); // 모드와 무관하게 — 값이 같으면 메인이 되돌린다
   if (mode !== 'diff') return;
   setStatus(`${mark(editorApi.getState('left'))}  |  ${mark(editorApi.getState('right'))}`);
 }
@@ -213,6 +214,26 @@ function renderPdfStatus(st) {
   $('btn-forward').disabled = !st.canForward;
   updatePdfBtns();
 }
+// ===== 열린 파일 경로를 메인에 알린다 (File 메뉴 맨 줄) =====
+// 모드마다 "무엇이 열려 있는가"가 다르므로 한 곳에서 정리한다. 라벨은 위치가 아니라
+// 역할로 붙인다 — 좌우를 바꿔도 pdfPaths가 함께 바뀌므로 왼쪽/오른쪽은 늘 사실이다.
+function openFileEntries() {
+  if (mode === 'pdf') return [['왼쪽', pdfPaths.left], ['오른쪽', pdfPaths.right]];
+  if (mode === 'memo') {
+    return [['메모', memoView?.getDoc('source').path],
+            ['번역본', memoView?.getDoc('translation').path]];
+  }
+  return [['왼쪽', editorApi.getState('left').path],
+          ['오른쪽', editorApi.getState('right').path]];
+}
+// 상태가 바뀔 만한 자리마다 부담 없이 부른다 — 메인이 같은 값이면 메뉴를 다시 만들지 않는다.
+function syncOpenFiles() {
+  const entries = openFileEntries()
+    .filter(([, path]) => path)
+    .map(([label, path]) => ({ label, path }));
+  window.wcompare.setOpenFiles(entries).catch(() => {}); // 메뉴 장식이라 실패해도 조용히 넘어간다
+}
+
 function setMode(m) {
   mode = m;
   // #diff-wrap 전체를 토글해야 좌/우 md TOC 드로어도 에디터와 함께 사라진다.
@@ -228,6 +249,7 @@ function setMode(m) {
   $('pdf-status').style.display = m === 'pdf' ? 'flex' : 'none';
   $('memo-status').style.display = m === 'memo' ? 'flex' : 'none';
   for (const k of ['diff', 'pdf', 'memo']) $(`btn-mode-${k}`).classList.toggle('on', m === k);
+  syncOpenFiles();
   if (m === 'diff') refreshStatus(); else setStatus('');
   resetDict(); // 모드가 바뀌면 선택 컨텍스트가 달라지므로 중복 전송 기준을 리셋한다
   if (m === 'pdf') applyLayout(); // 숨어 있는 동안 밀린 흐름도 렌더도 여기서 깨어난다
@@ -587,6 +609,7 @@ async function deleteTranslation() {
 }
 
 function updatePdfBtns() {
+  syncOpenFiles();
   const only = loadedPdfSides().length === 1;
   const any = loadedPdfSides().length > 0;
 
@@ -880,6 +903,7 @@ function memoTargetSide() {
 }
 
 function refreshMemoBtns() {
+  syncOpenFiles();
   if (!memoView || mode !== 'memo') return;
   const src = memoView.getDoc('source');
   const dirty = memoView.isDirty();
