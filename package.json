@@ -1,7 +1,7 @@
 {
   "name": "wcompare",
   "version": "0.1.0",
-  "buildVersion": "2026-08-20-002",
+  "buildVersion": "2026-08-20-004",
   "description": "Simple side-by-side file compare with syntax, lint, vim",
   "main": "src/main/main.js",
   "type": "commonjs",

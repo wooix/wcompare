@@ -26,6 +26,9 @@ const DEFAULTS = {
     theme: 'dark', // 'dark' | 'light'
     // 비교 모드에서 긴 줄을 화면 폭에서 접을지. 켜도 논리 줄은 그대로 하나다(그리기만 바뀐다).
     wordWrap: false,
+    // 좌우 비교 창을 같은 폭으로 잠글지. 끄면 가운데 분할선을 끌어 옮길 수 있지만,
+    // 폭이 달라지면 같은 문장이 좌우에서 다른 지점에서 접힌다.
+    paneEqualWidth: true,
   },
   // 번역 AI 모델 선택. engine은 transpaper --engine에 그대로 전달(agy|claude).
   // agyModel/claudeModel이 빈 문자열이면 엔진 기본값을 쓴다(플래그 생략).

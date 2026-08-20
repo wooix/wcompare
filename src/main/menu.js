@@ -108,6 +108,7 @@ function build() {
       { label: 'Prev Diff', accelerator: 'Shift+F7', click: () => send('menu:prev-diff') },
       { label: 'Toggle Whitespace', click: () => send('menu:toggle-ws') },
       { label: 'Toggle Word Wrap', click: () => send('menu:toggle-wrap') },
+      { label: 'Toggle Equal Pane Width', click: () => send('menu:toggle-pane-equal') },
       { label: 'Toggle Vim', click: () => send('menu:toggle-vim') },
       { label: 'Toggle Theme', click: () => send('menu:toggle-theme') },
       { label: 'Toggle Night (PDF)', click: () => send('menu:toggle-night') },

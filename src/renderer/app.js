@@ -15,6 +15,10 @@ import { normalizeEvent, hasModifier, format as fmtShortcut, isReserved, ACTIONS
 import {
   normalize as normalizeWrap, editorOptions as wrapOptions, buttonLabel as wrapLabel,
 } from './wordWrap.js';
+import {
+  normalize as normalizeEqual, equalizeRatio, editorOptions as equalOptions,
+  buttonLabel as equalLabel,
+} from './paneEqualize.js';
 
 const $ = (id) => document.getElementById(id);
 const isPdf = (p) => /\.pdf$/i.test(p || '');
@@ -837,6 +841,50 @@ function applyWordWrap(on, persist) {
   }
 }
 $('btn-wrap').onclick = () => applyWordWrap(!wordWrap, true);
+
+// 좌우 창 균등. Monaco는 전체 폭을 분할선으로 가른 뒤 가운데 거터(35px)를 왼쪽 몫에서만
+// 깎아, 그대로 두면 왼쪽이 늘 거터만큼 좁다. 폭이 다르면 접히는 자리도 달라져 같은
+// 문장이 좌우에서 다른 지점에서 끊긴다 — 비교 도구에서는 그게 곧 오독이다.
+// 켜면 분할선을 잠그고 우리가 계산한 비율을 넣는다. 끄면 예전처럼 끌어 옮길 수 있다.
+let paneEqual = true;
+let equalizeRaf = 0;
+
+// 폭을 재고, 어긋났으면 비율을 고쳐 넣기를 최대 세 번. 여러 번인 이유는 updateOptions가
+// 곧바로 배치를 끝내지 않아 첫 실측이 옛 값이기 때문이고, 세 번에서 멈추는 이유는
+// 분할선이 정수 픽셀이라 홀수 폭에서는 1px이 끝내 남기 때문이다(그건 어긋남이 아니다).
+// 항상 다음 프레임으로 미룬다 — ResizeObserver 안에서 곧바로 배치를 바꾸면 브라우저가
+// "loop completed with undelivered notifications"로 그 회차를 통째로 흘린다.
+function equalizePanes(passes = 3) {
+  cancelAnimationFrame(equalizeRaf);
+  if (!paneEqual || passes <= 0) return;
+  equalizeRaf = requestAnimationFrame(() => {
+    const ratio = equalizeRatio(editorApi.paneMetrics());
+    if (ratio == null) return; // 이미 같거나, 잴 수 없다(PDF 모드라 숨겨져 있다)
+    editorApi.updateOptions({ splitViewDefaultRatio: ratio });
+    equalizePanes(passes - 1);
+  });
+}
+
+function applyPaneEqual(on, persist) {
+  paneEqual = !!on;
+  editorApi.updateOptions(equalOptions(paneEqual));
+  const btn = $('btn-equal');
+  btn.textContent = equalLabel(paneEqual);
+  btn.classList.toggle('on', paneEqual);
+  equalizePanes(); // 켜는 순간 바로 맞춘다 — 이게 "수동으로 강제"에 해당한다
+  if (persist) {
+    window.wcompare.settings.set({ ui: { paneEqualWidth: paneEqual } })
+      .catch((e) => console.warn('좌우균등 설정 저장 실패(무시):', e?.message || e));
+  }
+}
+$('btn-equal').onclick = () => applyPaneEqual(!paneEqual, true);
+
+// 창 크기가 바뀌면 거터가 차지하는 비중이 달라져 비율을 다시 계산해야 한다. window의
+// resize가 아니라 편집기 상자를 직접 보는 이유는, 창은 그대로인 채 옆 패널이 열리고
+// 닫히거나 PDF 모드에서 돌아올 때도 폭이 바뀌기 때문이다.
+new ResizeObserver(() => equalizePanes()).observe($('editor'));
+applyPaneEqual(true, false); // 설정을 읽기 전에도 어긋난 채로 뜨지 않게
+
 $('btn-vim').onclick = () => toggleVim(editorApi);
 $('btn-zoom-out').onclick = () => dualView?.zoom(-1);
 $('btn-zoom-in').onclick = () => dualView?.zoom(1);
@@ -866,6 +914,7 @@ async function loadUserSettings() {
     if (s && s.shortcuts) shortcuts = { ...shortcuts, ...s.shortcuts };
     if (s?.ui?.theme) applyTheme(s.ui.theme);
     applyWordWrap(normalizeWrap(s?.ui?.wordWrap), false);
+    applyPaneEqual(normalizeEqual(s?.ui?.paneEqualWidth), false);
   } catch { /* 로드 실패 시 기본값 유지 */ }
 }
 // 액션 실행. PDF 전용(fit/sync/switch)은 dualView 존재·pdf 모드 가드를 지킨다(없으면 무시).
@@ -1571,6 +1620,7 @@ const MENU = {
   'menu:prev-diff': () => editorApi.goToDiff('previous'),
   'menu:toggle-ws': () => { ws = !ws; editorApi.updateOptions({ ignoreTrimWhitespace: ws }); },
   'menu:toggle-wrap': () => applyWordWrap(!wordWrap, true),
+  'menu:toggle-pane-equal': () => applyPaneEqual(!paneEqual, true),
   'menu:toggle-vim': () => toggleVim(editorApi),
   'menu:toggle-theme': () => setTheme(theme === 'dark' ? 'light' : 'dark'),
   'menu:toggle-night': () => toggleNight(),
