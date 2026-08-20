@@ -152,3 +152,39 @@ test('원자 기록: 임시파일을 남기지 않고 파일 하나만 만든다
   assert.ok(fs.existsSync(file), 'settings.json 생성됨');
   assert.ok(!fs.existsSync(`${file}.tmp`), 'rename 후 .tmp는 남지 않는다');
 });
+
+// ===== object 키 하위의 불리언 =====
+// 토글 설정(ui.wordWrap 같은)은 불리언이 자연스러운데, 하위값 검사가 문자열과 문자열
+// 배열만 통과시키면 set이 조용히 무시된다. 오류도 안 나고 저장만 안 되므로, 창을 새로
+// 열 때마다 토글이 초기화되는 형태로만 드러난다 — 여기서 잡는다.
+const UI_DEFAULTS = {
+  storageDir: DEFAULTS.storageDir,
+  ui: { theme: 'dark', wordWrap: false },
+};
+const uiStore = () =>
+  createSettingsStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ui-')), 'settings.json'),
+                      UI_DEFAULTS);
+
+test('object 키: 불리언 하위값이 저장되고 다시 읽힌다', () => {
+  const s = uiStore();
+  const after = s.set({ ui: { wordWrap: true } });
+  assert.equal(after.ui.wordWrap, true, 'set 결과에 반영되지 않았다');
+  assert.equal(s.get().ui.wordWrap, true, '파일에서 다시 읽으면 사라졌다');
+  assert.equal(after.ui.theme, 'dark', '형제 키는 보존');
+});
+
+test('object 키: 불리언 자리에 딴 타입이 오면 무시한다', () => {
+  // 타입 검사를 통째로 여는 게 아니라, defaults의 타입과 같을 때만 받는 규칙은 유지한다.
+  const s = uiStore();
+  s.set({ ui: { wordWrap: true } });
+  const after = s.set({ ui: { wordWrap: 'yes' } });
+  assert.equal(after.ui.wordWrap, true, '문자열이 불리언 자리를 덮어썼다');
+});
+
+test('object 키: 불리언 하위값을 다시 끌 수 있다', () => {
+  // false는 "값 없음"이 아니다. falsy라는 이유로 건너뛰면 한 번 켠 뒤 끌 수 없게 된다.
+  const s = uiStore();
+  s.set({ ui: { wordWrap: true } });
+  assert.equal(s.set({ ui: { wordWrap: false } }).ui.wordWrap, false);
+  assert.equal(s.get().ui.wordWrap, false);
+});

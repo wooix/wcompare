@@ -24,6 +24,8 @@ const DEFAULTS = {
   // 임의 문자열이 허용되므로 ui 아래에 둔다.
   ui: {
     theme: 'dark', // 'dark' | 'light'
+    // 비교 모드에서 긴 줄을 화면 폭에서 접을지. 켜도 논리 줄은 그대로 하나다(그리기만 바뀐다).
+    wordWrap: false,
   },
   // 번역 AI 모델 선택. engine은 transpaper --engine에 그대로 전달(agy|claude).
   // agyModel/claudeModel이 빈 문자열이면 엔진 기본값을 쓴다(플래그 생략).

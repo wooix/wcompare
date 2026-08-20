@@ -3,8 +3,9 @@
 //  - get(): 파일을 읽어 defaults와 merge(깨졌으면 defaults). 알 수 없는 키는 버린다.
 //  - set(patch): 허용 키(defaults의 키)만, 타입이 맞을 때만 반영. tmp+rename 원자 기록 후 결과 반환.
 //    · storageDir: 절대경로 문자열,  boolean 키: boolean,
-//    · object 키(shortcuts, translate): 하위 병합 — 하위값은 defaults의 타입과 같을 때만 채택.
-//      문자열 하위 defaults → 문자열만, 배열(문자열 배열) 하위 defaults → 원소가 전부 문자열인 배열만(통째 교체).
+//    · object 키(shortcuts, translate, ui): 하위 병합 — 하위값은 defaults의 타입과 같을 때만 채택.
+//      문자열 하위 defaults → 문자열만, 불리언 하위 defaults → 불리언만,
+//      배열(문자열 배열) 하위 defaults → 원소가 전부 문자열인 배열만(통째 교체).
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -27,6 +28,9 @@ function createSettingsStore(filePath, defaults) {
   // translate.agyModels)는 원소가 전부 문자열인 배열만(통째 교체). 알 수 없는 하위 키는 무시.
   // base(현재 병합값) 위에 incoming을 덮어쓴다.
   function validSubValue(defVal, val) {
+    // 불리언 하위값(예: ui.wordWrap 같은 토글). 없으면 set이 조용히 무시돼, 창을 새로
+    // 열 때마다 토글이 초기화되는 형태로만 드러난다.
+    if (typeof defVal === 'boolean') return typeof val === 'boolean';
     if (typeof defVal === 'string') return typeof val === 'string';
     if (Array.isArray(defVal)) return isStringArray(val);
     return false;

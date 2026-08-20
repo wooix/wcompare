@@ -12,6 +12,9 @@ import { createMemoView } from './memoView.js';
 import { flattenOutline, sectionRanges, sectionsDigest, outlineDigest } from './pdfOutline.js';
 import { createMdToc } from './mdToc.js';
 import { normalizeEvent, hasModifier, format as fmtShortcut, isReserved, ACTIONS } from './shortcuts.js';
+import {
+  normalize as normalizeWrap, editorOptions as wrapOptions, buttonLabel as wrapLabel,
+} from './wordWrap.js';
 
 const $ = (id) => document.getElementById(id);
 const isPdf = (p) => /\.pdf$/i.test(p || '');
@@ -817,6 +820,23 @@ $('btn-save').onclick = () => save();
 $('btn-prev-diff').onclick = () => editorApi.goToDiff('previous');
 $('btn-next-diff').onclick = () => editorApi.goToDiff('next');
 $('btn-ws').onclick = () => { ws = !ws; editorApi.updateOptions({ ignoreTrimWhitespace: ws }); };
+
+// 줄바꿈(word wrap). 긴 줄을 가로로 스크롤하지 않고 화면 폭에서 접어 본다. 접힌 줄은
+// 새 줄이 아니라 같은 논리 줄이므로 모델도 파일도 바뀌지 않는다 — 그리기만 달라진다.
+// persist=false는 시작 시 설정을 되살릴 때 쓴다(방금 읽은 값을 도로 저장하지 않으려고).
+let wordWrap = false;
+function applyWordWrap(on, persist) {
+  wordWrap = !!on;
+  editorApi.updateOptions(wrapOptions(wordWrap));
+  const btn = $('btn-wrap');
+  btn.textContent = wrapLabel(wordWrap);
+  btn.classList.toggle('on', wordWrap);
+  if (persist) {
+    window.wcompare.settings.set({ ui: { wordWrap } })
+      .catch((e) => console.warn('줄바꿈 설정 저장 실패(무시):', e?.message || e));
+  }
+}
+$('btn-wrap').onclick = () => applyWordWrap(!wordWrap, true);
 $('btn-vim').onclick = () => toggleVim(editorApi);
 $('btn-zoom-out').onclick = () => dualView?.zoom(-1);
 $('btn-zoom-in').onclick = () => dualView?.zoom(1);
@@ -845,6 +865,7 @@ async function loadUserSettings() {
     const s = await window.wcompare.settings.get();
     if (s && s.shortcuts) shortcuts = { ...shortcuts, ...s.shortcuts };
     if (s?.ui?.theme) applyTheme(s.ui.theme);
+    applyWordWrap(normalizeWrap(s?.ui?.wordWrap), false);
   } catch { /* 로드 실패 시 기본값 유지 */ }
 }
 // 액션 실행. PDF 전용(fit/sync/switch)은 dualView 존재·pdf 모드 가드를 지킨다(없으면 무시).
@@ -1549,6 +1570,7 @@ const MENU = {
   'menu:next-diff': () => editorApi.goToDiff('next'),
   'menu:prev-diff': () => editorApi.goToDiff('previous'),
   'menu:toggle-ws': () => { ws = !ws; editorApi.updateOptions({ ignoreTrimWhitespace: ws }); },
+  'menu:toggle-wrap': () => applyWordWrap(!wordWrap, true),
   'menu:toggle-vim': () => toggleVim(editorApi),
   'menu:toggle-theme': () => setTheme(theme === 'dark' ? 'light' : 'dark'),
   'menu:toggle-night': () => toggleNight(),
