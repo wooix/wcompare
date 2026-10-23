@@ -20,11 +20,13 @@ const MAIN = path.join(__dirname, '..', '..', 'src', 'main', 'main.js');
 const L = '.pdf-pane[data-side=left]';
 const S = '.pdf-summary';
 
-// 편집칸 7개: DOM id ↔ settings.summaryPrompts 하위 키.
+// 편집칸 9개: DOM id ↔ settings.summaryPrompts 하위 키.
 const FIELDS = [
   ['#set-prompt-common', 'common'],
   ['#set-prompt-overview-spec', 'overviewSpec'],
   ['#set-prompt-overview-tail', 'overviewTail'],
+  ['#set-prompt-narrative-spec', 'narrativeSpec'],
+  ['#set-prompt-narrative-tail', 'narrativeTail'],
   ['#set-prompt-sections-spec', 'sectionsSpec'],
   ['#set-prompt-sections-tail', 'sectionsTail'],
   ['#set-prompt-flow-spec', 'flowSpec'],
@@ -42,7 +44,7 @@ function setup(tag) {
 const setStorage = (app, dir) => app.evaluate((_electron, d) => {
   const cache = process.mainModule.require('module')._cache;
   const key = Object.keys(cache).find((k) => k.replace(/\\/g, '/').endsWith('/src/main/settings.js'));
-  cache[key].exports.set({ storageDir: d });
+  cache[key].exports.set({ storageDir: d, translate: { engine: 'agy' } });
 }, dir);
 
 async function launch({ userData, storageDir }, args = [], env = undefined) {
@@ -99,6 +101,8 @@ test('설정창: 탭 3개가 있고 누른 탭의 패널만 보인다', async ()
   // 번역 항목이 "보인다"까지 봐야 의미가 있다: selectOption/fill은 가시성을 요구하므로
   // 숨은 패널 안에 있으면 조작 자체가 타임아웃한다.
   await expect(win.locator('#set-translate-engine')).toBeVisible();
+  await expect(win.locator('#set-claude-model')).toBeHidden();
+  await win.selectOption('#set-translate-engine', 'claude');
   await expect(win.locator('#set-claude-model')).toBeVisible();
 
   await win.click('#set-tab-prompts');
@@ -131,14 +135,14 @@ test('설정창: 탭 3개가 있고 누른 탭의 패널만 보인다', async ()
   fs.rmSync(s.dir, { recursive: true, force: true });
 });
 
-test('요약 프롬프트 탭: 7칸 모두 내장 기본 프롬프트 원문으로 채워져 열린다', async () => {
+test('요약 프롬프트 탭: 9칸 모두 내장 기본 프롬프트 원문으로 채워져 열린다', async () => {
   const s = setup('defaults');
   const { app, win } = await launch(s);
   await openSettings(app, win);
   await win.click('#set-tab-prompts');
 
   const defs = await getDefaults(win);
-  // IPC가 7칸을 다 돌려주는지부터 본다 — 한 칸이라도 빠지면 그 칸은 빈 화면으로 열린다.
+  // IPC가 9칸을 다 돌려주는지부터 본다 — 한 칸이라도 빠지면 그 칸은 빈 화면으로 열린다.
   expect(Object.keys(defs).sort()).toEqual(FIELDS.map(([, k]) => k).sort());
 
   for (const [sel, key] of FIELDS) {
@@ -152,7 +156,7 @@ test('요약 프롬프트 탭: 7칸 모두 내장 기본 프롬프트 원문으�
 
   // 화면만 채웠을 뿐 저장은 여전히 ''다 — 손대지 않은 사용자에게 지금 문구가 박제되면 안 된다.
   expect(await getPrompts(win)).toEqual({
-    common: '', overviewSpec: '', overviewTail: '', sectionsSpec: '', sectionsTail: '', flowSpec: '', flowTail: '',
+    common: '', overviewSpec: '', overviewTail: '', narrativeSpec: '', narrativeTail: '', sectionsSpec: '', sectionsTail: '', flowSpec: '', flowTail: '',
   });
 
   await app.close();
@@ -246,7 +250,7 @@ function stubAgyRecording(dir, outDir) {
     '  *"흐름도를 mermaid"*)',
     "    printf '```mermaid\\nflowchart TD\\n  A[\"문제 제기\"] --> B[\"핵심 아이디어\"]\\n```\\n'",
     '    ;;',
-    '  *"절 단위로 나누어"*)',
+    '  *"절 단위로"*)',
     "    printf '## 1. 서론\\n첫째 절 요약 본문.\\n'",
     '    ;;',
     '  *)',
@@ -279,10 +283,10 @@ test('고친 프롬프트가 실제 요약 CLI 인자에 실린다', async () =>
 
   // 요약을 실제로 돌린다(가짜 CLI가 프롬프트를 받아 적는다).
   await win.click('#btn-layout-summary');
-  await win.click(`${S} .sum-empty-go`);
+  await win.click(`${S} .sum-all`);
   await expect(win.locator(`${S} .sum-pane[data-kind=overview]`))
     .toContainText('한 줄짜리 개요 본문', { timeout: 25000 });
-  await expect.poll(() => fs.readdirSync(outDir).length, { timeout: 25000 }).toBe(3); // overview/sections/flow
+  await expect.poll(() => fs.readdirSync(outDir).length, { timeout: 25000 }).toBe(4); // overview/narrative/sections/flow
 
   const seen = fs.readdirSync(outDir).map((f) => fs.readFileSync(path.join(outDir, f), 'utf8'));
   // 공통 규칙은 세 종류 모두에 실린다.

@@ -60,19 +60,20 @@ test('PDF ✕ 닫기: 해당 pane만 닫히고 반대편은 유지되며 재오�
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('File 메뉴에 Close Left/Right와 Settings…가 있다', async () => {
+test('File 메뉴에서 ⌘W는 창을 닫고 파일 닫기는 별도 단축키를 쓴다', async () => {
   const { dir, userData } = setup('menu');
   const app = await launch([], userData);
   const win = await app.firstWindow();
   await win.waitForSelector('#toolbar', { timeout: 20000 });
 
-  const labels = await app.evaluate(({ Menu }) => {
+  const items = await app.evaluate(({ Menu }) => {
     const file = Menu.getApplicationMenu().items.find((i) => i.label === 'File');
-    return file.submenu.items.map((x) => x.label);
+    return file.submenu.items.map((x) => ({ label: x.label, accelerator: x.accelerator }));
   });
-  expect(labels).toContain('Close Left');
-  expect(labels).toContain('Close Right');
-  expect(labels).toContain('Settings…');
+  expect(items).toContainEqual({ label: 'Close Window', accelerator: 'CmdOrCtrl+W' });
+  expect(items).toContainEqual({ label: 'Close Left', accelerator: 'CmdOrCtrl+Alt+W' });
+  expect(items).toContainEqual({ label: 'Close Right', accelerator: 'CmdOrCtrl+Alt+Shift+W' });
+  expect(items.map((x) => x.label)).toContain('Settings…');
 
   await app.close();
   fs.rmSync(dir, { recursive: true, force: true });

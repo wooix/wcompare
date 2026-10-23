@@ -102,7 +102,8 @@ export function createMemoView(hostEl, { onDirty, onFocus } = {}) {
 
   for (const side of ['source', 'translation']) {
     editors[side].getModel().onDidChangeContent(() => {
-      if (!docs[side].dirty) { docs[side].dirty = true; onDirty && onDirty(); }
+      docs[side].dirty = true;
+      onDirty && onDirty();
       if (side === mainSide) schedulePreview();
     });
     editors[side].onDidFocusEditorText(() => {
@@ -205,7 +206,12 @@ export function createMemoView(hostEl, { onDirty, onFocus } = {}) {
     setDoc,
     getValue: (side) => editors[side].getValue(),
     getDoc: (side) => docs[side],
-    setSaved: (side) => { docs[side].dirty = false; onDirty && onDirty(); },
+    captureViewState: () => Object.fromEntries(['source', 'translation'].map(side => [side, editors[side].saveViewState()])),
+    restoreViewState: (state) => {
+      for (const side of ['source', 'translation']) if (state?.[side]) editors[side].restoreViewState(state[side]);
+    },
+    setPath: (side, path, name) => { Object.assign(docs[side], { path, name }); onDirty && onDirty(); },
+    setSaved: (side, content) => { docs[side].dirty = content !== undefined && editors[side].getValue() !== content; onDirty && onDirty(); },
     isDirty: () => docs.source.dirty || docs.translation.dirty,
     focusedSide: () => focused,
     mainSide: () => mainSide,

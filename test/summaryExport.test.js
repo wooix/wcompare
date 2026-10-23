@@ -13,7 +13,7 @@ test('buildExportMarkdown: flow는 ```mermaid 펜스로 감싸진다', () => {
     { scope: 'all' },
   );
   assert.match(md, /```mermaid\nflowchart TD\n {2}A\["시작"\] --> B\["끝"\]\n```/);
-  assert.match(md, /## 흐름도/);
+  assert.match(md, /## 한눈에 보기/);
 });
 
 test('buildExportMarkdown: 이미 펜스로 감싸진 flow는 이중 펜스가 되지 않는다', () => {
@@ -40,19 +40,19 @@ test('buildExportMarkdown: 중첩 펜스가 있는 flow는 벗기지 않고 그�
 test('buildExportMarkdown: scope=current면 지정한 탭 하나만 담는다', () => {
   const parts = { overview: '개요 본문', sections: '## 1장\n절 본문', flow: 'flowchart TD\n  A-->B' };
   const md = buildExportMarkdown(parts, { scope: 'current', tab: 'sections' });
-  assert.match(md, /## 절별 요약/);
+  assert.match(md, /## 근거 확인/);
   assert.match(md, /절 본문/);
-  assert.doesNotMatch(md, /## Overview/);
-  assert.doesNotMatch(md, /## 흐름도/);
+  assert.doesNotMatch(md, /## 핵심 파악/);
+  assert.doesNotMatch(md, /## 한눈에 보기/);
 });
 
 test('buildExportMarkdown: scope=current인데 tab이 부적합하면 전체로 물러난다', () => {
   const parts = { overview: '개요 본문', sections: '절 본문', flow: 'flowchart TD\n  A-->B' };
   for (const badTab of [undefined, null, '', 'bogus', 'constructor']) {
     const md = buildExportMarkdown(parts, { scope: 'current', tab: badTab });
-    assert.match(md, /## Overview/, `tab=${String(badTab)}`);
-    assert.match(md, /## 절별 요약/, `tab=${String(badTab)}`);
-    assert.match(md, /## 흐름도/, `tab=${String(badTab)}`);
+    assert.match(md, /## 핵심 파악/, `tab=${String(badTab)}`);
+    assert.match(md, /## 근거 확인/, `tab=${String(badTab)}`);
+    assert.match(md, /## 한눈에 보기/, `tab=${String(badTab)}`);
   }
 });
 

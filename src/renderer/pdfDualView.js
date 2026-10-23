@@ -135,6 +135,7 @@ export function createDualView(hostEl) {
 
   let syncEnabled = true;
   let syncing = false;
+  const alignedScroll = { left: null, right: null };
   let fitWidth = true; // 최초 로드가 page-width라 켜진 상태로 시작
   let outlineOpen = false;
   const loaded = { left: false, right: false };
@@ -171,9 +172,12 @@ export function createDualView(hostEl) {
 
   function align(fromSide) {
     const from = viewers[fromSide].el;
-    const to = viewers[other(fromSide)].el;
+    const toSide = other(fromSide);
+    const to = viewers[toSide].el;
     to.scrollTop = syncTargetTop(from, to);
     to.scrollLeft = syncTargetLeft(from, to); // 확대 시 생긴 가로 스크롤도 함께 맞춘다
+    // 브라우저가 나중에 전달하는 이 스크롤 이벤트를 새 사용자 입력으로 되돌려 보내지 않는다.
+    alignedScroll[toSide] = { top: to.scrollTop, left: to.scrollLeft };
   }
 
   function realign() {
@@ -182,6 +186,11 @@ export function createDualView(hostEl) {
 
   function onScroll(fromSide) {
     if (!syncEnabled || syncing) return;
+    const expected = alignedScroll[fromSide];
+    alignedScroll[fromSide] = null;
+    const from = viewers[fromSide].el;
+    if (expected && Math.abs(from.scrollTop - expected.top) < 2
+        && Math.abs(from.scrollLeft - expected.left) < 2) return;
     if (!bothVisible()) return;
     syncing = true;
     align(fromSide);
@@ -310,6 +319,55 @@ export function createDualView(hostEl) {
     if (outlineOpen && side === TOC_SIDE) { hostEl.classList.add('outline-open'); refreshOutline(); }
     refind();
     emit();
+  }
+
+  // 파일 갱신은 PDF 객체를 새로 파싱하되 읽던 위치와 배율을 되돌린다. 좌우를 모두
+  // 교체한 뒤 복원해야 Sync가 한쪽의 초기 위치를 다른 쪽에 전파하지 않는다.
+  async function reloadSides(entries) {
+    const state = Object.fromEntries(entries.map(({ side }) => {
+      const viewer = viewers[side];
+      const el = viewer.el;
+      const page = viewer.pageDiv();
+      return [side, {
+        page: viewer.currentPage(), scale: viewer.getScale(), anchor: readAnchor(side),
+        vertical: page?.offsetHeight
+          ? (el.scrollTop + el.clientHeight / 2 - page.offsetTop) / page.offsetHeight : null,
+      }];
+    }));
+    syncing = true;
+    try {
+      for (const { side, bytes, path } of entries) await openSide(side, { bytes, path });
+      hist.back.length = 0;
+      hist.fwd.length = 0;
+    } finally {
+      for (const { side } of entries) {
+        if (syncEnabled && side !== 'left' && loaded.left) continue;
+        const viewer = viewers[side];
+        const saved = state[side];
+        if (!fitWidth && Number.isFinite(saved.scale)) viewer.setScale(saved.scale);
+        viewer.scrollToPage(Math.max(1, Math.min(viewer.pageCount() || 1, saved.page)));
+      }
+      // 숨겨진 창에서는 RAF가 정지할 수 있으므로 제한 시간 뒤에도 복원을 끝낸다.
+      await new Promise(resolve => {
+        let done = false;
+        const finish = () => { if (done) return; done = true; clearTimeout(timer); resolve(); };
+        const timer = setTimeout(finish, 250);
+        requestAnimationFrame(() => requestAnimationFrame(finish));
+      });
+      for (const { side } of entries) {
+        if (syncEnabled && side !== 'left' && loaded.left) continue;
+        const viewer = viewers[side];
+        const saved = state[side];
+        const page = viewer.pageDiv();
+        if (page?.offsetHeight && Number.isFinite(saved.vertical)) {
+          viewer.el.scrollTop = page.offsetTop + saved.vertical * page.offsetHeight - viewer.el.clientHeight / 2;
+        }
+        applyAnchor(side, saved.anchor);
+      }
+      if (syncEnabled && bothVisible()) align('left');
+      syncing = false;
+      emit();
+    }
   }
 
   // 등록된 핸들러(app.js)가 다운로드(main IPC)와 열기를 맡는다. 진행 중에는 번역과 같은
@@ -640,6 +698,7 @@ export function createDualView(hostEl) {
 
   return {
     openSide,
+    reloadSides,
     closeSide,
     // URL 열기 핸들러 등록 — cb(side, url)이 던진 오류 메시지가 그대로 URL 패널에 표시된다.
     onOpenUrl: (cb) => urlCbs.push(cb),
@@ -648,6 +707,17 @@ export function createDualView(hostEl) {
     setFit,
     zoom,
     gotoPage,
+    jumpToSource: (side, page) => {
+      const viewer = viewers[side];
+      if (!loaded[side] || !Number.isInteger(page) || page < 1 || page > viewer.pageCount()) return false;
+      hist.back.push(snapshot());
+      if (hist.back.length > HIST_MAX) hist.back.shift();
+      hist.fwd.length = 0;
+      syncing = true;
+      viewer.scrollToPage(page);
+      requestAnimationFrame(() => { syncing = false; emit(); });
+      return true;
+    },
     switchSides,
     find,
     onFind: (cb) => findCbs.push(cb),

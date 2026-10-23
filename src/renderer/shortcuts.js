@@ -61,8 +61,10 @@ function format(str) {
 const RESERVED = {
   'Cmd+O': '열기 왼쪽',
   'Cmd+Shift+O': '열기 오른쪽',
-  'Cmd+W': '닫기',
-  'Cmd+Shift+W': '닫기 오른쪽',
+  'Cmd+R': '파일 갱신',
+  'Cmd+W': '창 닫기',
+  'Cmd+Alt+W': '닫기 왼쪽',
+  'Cmd+Alt+Shift+W': '닫기 오른쪽',
   'Cmd+S': '저장',
   'Cmd+Shift+P': '프로젝트 열기',
   'Cmd+Shift+S': '프로젝트 저장',

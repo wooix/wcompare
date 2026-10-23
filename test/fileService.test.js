@@ -44,6 +44,7 @@ test('readBytes: 파일 바이트와 크기 반환', () => {
   const { readBytes } = require('../src/main/fileService.js');
   const r = readBytes(p);
   assert.equal(r.byteSize, 4);
+  assert.match(r.sha256, /^[a-f0-9]{64}$/);
   assert.ok(Buffer.isBuffer(r.bytes));
   assert.equal(r.bytes[0], 0x25);
   fs.unlinkSync(p);

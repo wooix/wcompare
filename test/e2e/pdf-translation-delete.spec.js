@@ -57,7 +57,7 @@ function setup(tag, confirm) {
 const setStorage = (app, d) => app.evaluate((_electron, dir) => {
   const cache = process.mainModule.require('module')._cache;
   const key = Object.keys(cache).find((k) => k.replace(/\\/g, '/').endsWith('/src/main/settings.js'));
-  cache[key].exports.set({ storageDir: dir });
+  cache[key].exports.set({ storageDir: dir, translate: { engine: 'agy' } });
 }, d);
 
 test('번역본이 없으면 비활성 → 번역하면 활성 → 취소하면 파일이 남는다', async () => {

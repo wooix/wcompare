@@ -80,6 +80,11 @@ test('하이라이트를 찍으면 자동 저장되고, 같은 PDF를 다시 열
     await win.waitForSelector(`${L} .textLayer span`, { timeout: 20000 });
     // reset()이 지운 오버레이가 아니라, markers:load로 붙은 복원 마커가 보여야 한다
     await expect(win.locator(`${L} .wc-mark-highlight`)).toHaveCount(1, { timeout: 10000 });
+    await expect.poll(() => win.evaluate((pane) => {
+      const span = document.querySelector(`${pane} .textLayer span`).getBoundingClientRect();
+      const mark = document.querySelector(`${pane} .wc-mark-highlight`).getBoundingClientRect();
+      return Math.abs(mark.bottom - span.bottom - 0.5);
+    }, L)).toBeLessThan(1.25); // 기존 저장 좌표도 현재 텍스트 줄 높이에 맞춰 다시 표시
     await app.close();
   }
 

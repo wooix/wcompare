@@ -121,7 +121,7 @@ function parseModelList(stdout) {
 function buildTranslateArgs(input, outPath, translateSettings = {}) {
   const args = [input, '-o', outPath, '-v'];
   const { engine, agyModel, claudeModel } = translateSettings || {};
-  if (engine === 'agy' || engine === 'claude') args.push('--engine', engine);
+  if (['agy', 'claude'].includes(engine)) args.push('--engine', engine);
   if (typeof agyModel === 'string' && MODEL_NAME_RE.test(agyModel)) args.push('--agy-model', agyModel);
   if (typeof claudeModel === 'string' && MODEL_NAME_RE.test(claudeModel)) args.push('--claude-model', claudeModel);
   return args;
@@ -137,20 +137,24 @@ function buildTranslateArgs(input, outPath, translateSettings = {}) {
  * @returns {{ promise: Promise<{output,partial,pages}>, cancel: () => void, output: string }}
  */
 function translate(input, { onProgress, output, env = process.env, translateSettings } = {}) {
+  if (translateSettings?.engine === 'codex') return require('./codexPdf').translatePdf(input, { onProgress, output, env, translateSettings });
   const bin = resolveBin(env);
   if (!bin) return { promise: Promise.reject(new Error(NOT_FOUND_HINT)), cancel() {}, output: null };
 
   const outPath = output || outputPathFor(input);
   // detached: 자신만의 프로세스 그룹을 갖게 해, 취소 시 transpaper가 띄운 agy/claude까지 함께 정리한다.
-  const child = spawn(bin, buildTranslateArgs(input, outPath, translateSettings), {
-    env: envWithPath(env), detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+  let executable = bin;
+  let args = buildTranslateArgs(input, outPath, translateSettings);
+  const childEnv = envWithPath(env);
+  const child = spawn(executable, args, {
+    env: childEnv, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
 
   let pages = 0;
   let canceled = false;
   const errTail = [];
 
-  onLines(child.stdout, (line) => { if (isProgressLine(line)) onProgress?.({ done: ++pages }); });
+  onLines(child.stdout, (line) => { if (isProgressLine(line)) { pages++; onProgress?.({ done: pages }); } });
   onLines(child.stderr, (line) => { errTail.push(line); if (errTail.length > 40) errTail.shift(); });
 
   const promise = new Promise((resolve, reject) => {

@@ -9,7 +9,7 @@ const summaryStore = require('../src/main/summaryStore.js');
 
 function tmpDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'wc-sumstore-')); }
 
-const PARTS = { overview: '전체 요약입니다.', sections: '1장: 서론\n2장: 방법', flow: 'graph TD; A-->B;' };
+const PARTS = { narrative: '핵심 정리입니다.', overview: '전체 요약입니다.', sections: '1장: 서론\n2장: 방법', flow: 'graph TD; A-->B;' };
 const META = { engine: 'agy', model: 'sonnet', truncated: false };
 
 test('경로→파일명은 결정적: 같은 경로는 같은 파일, 다른 경로는 다른 파일', () => {
@@ -80,9 +80,9 @@ test('sanitizeParts: 상한 초과 파트는 잘리고, 문자열이 아닌 값�
   assert.equal(clean.flow, '');
 
   // 숫자, null, 배열 자체가 raw로 와도 안전
-  assert.deepEqual(summaryStore.sanitizeParts(42), { overview: '', sections: '', flow: '' });
-  assert.deepEqual(summaryStore.sanitizeParts(null), { overview: '', sections: '', flow: '' });
-  assert.deepEqual(summaryStore.sanitizeParts([1, 2, 3]), { overview: '', sections: '', flow: '' });
+  assert.deepEqual(summaryStore.sanitizeParts(42), { overview: '', narrative: '', sections: '', flow: '' });
+  assert.deepEqual(summaryStore.sanitizeParts(null), { overview: '', narrative: '', sections: '', flow: '' });
+  assert.deepEqual(summaryStore.sanitizeParts([1, 2, 3]), { overview: '', narrative: '', sections: '', flow: '' });
 });
 
 test('상한 초과 파트를 저장하면 로드 시에도 잘린 채로 나온다', () => {
@@ -113,7 +113,7 @@ test('세 파트가 전부 비면 저장 대신 파일을 지운다(정리)', ()
   summaryStore.save(dir, abs, PARTS, META);
   assert.equal(fs.existsSync(summaryStore.filePathFor(dir, abs)), true);
 
-  const res = summaryStore.save(dir, abs, { overview: '', sections: '', flow: '' }, {});
+  const res = summaryStore.save(dir, abs, { overview: '', narrative: '', sections: '', flow: '' }, {});
   assert.equal(res.saved, false);
   assert.equal(fs.existsSync(summaryStore.filePathFor(dir, abs)), false, '빈 저장 → 파일 삭제');
   // 없는 파일에 빈 저장을 다시 해도 예외 없이 통과
@@ -136,7 +136,7 @@ test('깨진 JSON을 로드하면 빈 값을 돌려준다(열기 흐름을 막�
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(summaryStore.filePathFor(dir, abs), '{ not json');
   const loaded = summaryStore.load(dir, abs);
-  assert.deepEqual(loaded.parts, { overview: '', sections: '', flow: '' });
+  assert.deepEqual(loaded.parts, { overview: '', narrative: '', sections: '', flow: '' });
   assert.equal(loaded.meta, null);
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -148,14 +148,14 @@ test('format/version이 다르면 빈 값을 돌려준다', () => {
   fs.writeFileSync(summaryStore.filePathFor(dir, abs), JSON.stringify({
     format: 'something-else', version: 1, parts: PARTS,
   }));
-  assert.deepEqual(summaryStore.load(dir, abs).parts, { overview: '', sections: '', flow: '' });
+  assert.deepEqual(summaryStore.load(dir, abs).parts, { overview: '', narrative: '', sections: '', flow: '' });
   assert.equal(summaryStore.load(dir, abs).meta, null);
 
   const abs2 = '/x/wrongversion.pdf';
   fs.writeFileSync(summaryStore.filePathFor(dir, abs2), JSON.stringify({
     format: 'wcompare-summary', version: 99, parts: PARTS,
   }));
-  assert.deepEqual(summaryStore.load(dir, abs2).parts, { overview: '', sections: '', flow: '' });
+  assert.deepEqual(summaryStore.load(dir, abs2).parts, { overview: '', narrative: '', sections: '', flow: '' });
   assert.equal(summaryStore.load(dir, abs2).meta, null);
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -163,7 +163,20 @@ test('format/version이 다르면 빈 값을 돌려준다', () => {
 test('없는 파일을 로드하면 빈 값을 돌려준다', () => {
   const dir = tmpDir();
   const loaded = summaryStore.load(dir, '/x/missing.pdf');
-  assert.deepEqual(loaded.parts, { overview: '', sections: '', flow: '' });
+  assert.deepEqual(loaded.parts, { overview: '', narrative: '', sections: '', flow: '' });
   assert.equal(loaded.meta, null);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('reading versions survive partial cache updates and reject invalid metadata', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-reading-meta-'));
+  const pdf = path.join(dir, 'paper.pdf');
+  try {
+    summaryStore.save(dir, pdf, { overview: 'first', narrative: 'old explanation' }, {
+      readingVersions: { overview: 2, narrative: 'bad', sections: -1, flow: 999, unexpected: 2 },
+    });
+    const cached = summaryStore.load(dir, pdf);
+    assert.deepEqual(cached.meta.readingVersions, { overview: 2 });
+    assert.equal(cached.parts.narrative, 'old explanation');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

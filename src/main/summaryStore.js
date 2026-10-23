@@ -52,6 +52,7 @@ function sanitizeParts(raw) {
   const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   return {
     overview: cleanPart(src.overview),
+    narrative: cleanPart(src.narrative),
     sections: cleanPart(src.sections),
     flow: cleanPart(src.flow),
   };
@@ -64,6 +65,9 @@ function sanitizeMeta(raw) {
     engine: typeof src.engine === 'string' ? src.engine.slice(0, 64) : '',
     model: typeof src.model === 'string' ? src.model.slice(0, 128) : '',
     truncated: typeof src.truncated === 'boolean' ? src.truncated : false,
+    ...(src.readingVersions && typeof src.readingVersions === 'object' ? {
+      readingVersions: Object.fromEntries(KINDS.filter(k => Number.isInteger(src.readingVersions[k]) && src.readingVersions[k] > 0 && src.readingVersions[k] <= 100).map(k => [k, src.readingVersions[k]])),
+    } : {}),
   };
 }
 
@@ -90,7 +94,7 @@ function load(dir, absPath) {
 // 있으면 넘어온 parts를 그대로(병합 없이) tmp+rename으로 원자 기록한다.
 function save(dir, absPath, parts, meta) {
   const clean = sanitizeParts(parts);
-  if (!clean.overview && !clean.sections && !clean.flow) {
+  if (!clean.overview && !clean.narrative && !clean.sections && !clean.flow) {
     remove(dir, absPath);
     return { saved: false, parts: clean };
   }

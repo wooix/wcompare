@@ -23,12 +23,14 @@ export function createPdfViewer(hostEl) {
   const findCbs = [];
   const navCbs = [];
   const renderCbs = [];
+  const textRenderCbs = [];
   const initCbs = [];
 
   eventBus.on('pagechanging', (e) => pageCbs.forEach((cb) => cb(e.pageNumber)));
   // 줌하면 PDFPageView.update() → reset() 이 페이지 div의 "pdf.js가 모르는 자식"을 전부 지운다.
   // 마커 오버레이는 여기서 매번 다시 붙여야 살아남는다.
   eventBus.on('pagerendered', (e) => renderCbs.forEach((cb) => cb(e.pageNumber)));
+  eventBus.on('textlayerrendered', (e) => textRenderCbs.forEach((cb) => cb(e.pageNumber)));
   eventBus.on('pagesinit', () => initCbs.forEach((cb) => cb()));
 
   const onFindUpdate = (e) => {
@@ -97,8 +99,9 @@ export function createPdfViewer(hostEl) {
       const tc = await page.getTextContent();
       let out = '';
       for (const item of tc.items) {
+        if (typeof item.str !== 'string') continue;
         out += item.str;
-        if (item.hasEOL) out += '\n';
+        out += item.hasEOL ? '\n' : ' ';
       }
       pages.push(out);
     }
@@ -159,6 +162,7 @@ export function createPdfViewer(hostEl) {
     // textLayer는 inset:0 이라 콘텐츠 박스와 정확히 일치한다.
     textLayerOf: (n) => viewer.getPageView(n - 1)?.textLayer?.div || null,
     onPageRendered: (cb) => renderCbs.push(cb),
+    onTextLayerRendered: (cb) => textRenderCbs.push(cb),
     onPagesInit: (cb) => initCbs.push(cb),
     scrollToPage: (n) => viewer.scrollPageIntoView({ pageNumber: n }),
     onPageChange: (cb) => pageCbs.push(cb),

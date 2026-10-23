@@ -14,6 +14,8 @@ const MAIN = path.join(__dirname, '..', '..', 'src', 'main', 'main.js');
 // spec 사이로 새지 않도록 userData를 이 파일 전용 임시 폴더로 격리한다. 공유 프로필을 쓰면
 // 요약 패널이 열린 채로 시작해 pane 폭이 달라지고, 배율·스크롤을 재는 테스트가 실행 순서에 따라 흔들린다.
 const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ud-'));
+// The fixture invokes an agy-style transpaper stub, independent of the app default.
+fs.writeFileSync(path.join(USER_DATA, 'settings.json'), JSON.stringify({ translate: { engine: 'agy' }, storageDir: path.join(USER_DATA, 'storage') }));
 const leftC = '.pdf-pane[data-side=left] .pdf-container';
 const rightC = '.pdf-pane[data-side=right] .pdf-container';
 

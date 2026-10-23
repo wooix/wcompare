@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="ko">
 <head>
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy"
@@ -285,7 +285,7 @@
   /* multiply는 "페이지 canvas 위"에서 일어난다 — 페이지는 두 테마 모두 흰 종이라 blend는 그대로다.
      (--pdf-bg가 밝아져도 마커는 페이지 안에만 놓이므로 영향이 없다) */
   .wc-mark-highlight { mix-blend-mode:multiply; border-radius:2px; } /* 글자가 비쳐 보이게 */
-  .wc-mark-underline { box-shadow: inset 0 -2px 0 currentColor; }
+  .wc-mark-underline { border-bottom:1.5px solid currentColor; }
 
   /* pane 우상단 닫기 버튼 — 문서가 로드된 pane에만 보인다 */
   .pdf-close { display:none; position:absolute; top:6px; right:14px; z-index:4;
@@ -542,6 +542,7 @@
   <div id="toolbar">
     <button id="btn-open-left">Open Left</button>
     <button id="btn-open-right">Open Right</button>
+    <button id="btn-reload-files" title="현재 화면에 열린 파일을 디스크에서 다시 불러옵니다" disabled>↻ 파일 갱신</button>
     <!-- 모드 3종. 예전에는 'PDF Mode' 토글 하나였는데, 셋이 되면 2항 토글이 성립하지 않는다
          (다음이 무엇인지 라벨로 알 수 없다) → #pdf-layout과 같은 붙은 버튼 묶음으로 바꿨다. -->
     <span id="mode-switch">
@@ -664,26 +665,42 @@
     </div>
 
     <div class="set-panel" id="set-panel-translate" data-tab="translate">
-      <div style="color:var(--fg-subtle); font-size:11px; margin-bottom:6px;">번역 엔진·모델 (비우면 엔진 기본값 사용)</div>
+      <div style="color:var(--fg-subtle); font-size:11px; margin-bottom:6px;"><h2 class="settings-heading">나에게 맞는 AI</h2><p class="settings-description">PDF 번역, 논문 요약, 메모 번역에 공통으로 사용합니다.</p></div>
       <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
         <span style="width:70px; display:inline-block; color:var(--fg-muted);">엔진</span>
         <select id="set-translate-engine">
+          <option value="codex">Codex · OpenAI</option>
           <option value="agy">agy</option>
           <option value="claude">claude</option>
         </select>
       </div>
-      <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
-        <span style="width:70px; display:inline-block; color:var(--fg-muted);">agy 모델</span>
+      <div data-engine-options="agy" style="display:flex; align-items:center; gap:6px; margin:6px 0;">
+        <label for="set-agy-model" style="width:70px; display:inline-block; color:var(--fg-muted);">agy 모델</label>
         <input id="set-agy-model" list="agy-model-list" placeholder="(기본값)" style="width:200px" />
         <datalist id="agy-model-list"></datalist>
         <button id="set-agy-refresh">목록 새로고침</button>
         <span id="set-agy-refresh-status" style="color:var(--fg-subtle); font-size:11px;"></span>
       </div>
-      <div style="display:flex; align-items:center; gap:6px; margin:6px 0;">
-        <span style="width:70px; display:inline-block; color:var(--fg-muted);">claude 모델</span>
+      <div data-engine-options="claude" style="display:flex; align-items:center; gap:6px; margin:6px 0;">
+        <label for="set-claude-model" style="width:70px; display:inline-block; color:var(--fg-muted);">Claude 모델</label>
         <input id="set-claude-model" list="claude-model-list" placeholder="(기본값)" style="width:200px" />
         <datalist id="claude-model-list"></datalist>
       </div>
+      <div data-engine-options="codex" class="ai-options">
+        <label for="set-codex-model">모델</label>
+        <div class="codex-model-row">
+          <select id="set-codex-model" aria-describedby="set-codex-model-status" disabled>
+            <option value="">Codex 모델을 불러오는 중…</option>
+          </select>
+          <button id="set-codex-refresh" type="button">새로고침</button>
+        </div>
+        <p id="set-codex-model-status" class="settings-description" role="status" aria-live="polite">설정을 열 때마다 Codex CLI에서 모델 목록을 확인합니다.</p>
+        <label for="set-codex-effort">추론 강도 <span class="settings-description">Effort</span></label>
+        <select id="set-codex-effort" aria-describedby="effort-help"></select>
+        <p id="effort-help" class="settings-description">선택한 모델에 대해 Codex가 알려준 추론 강도만 표시합니다.</p>
+        <p class="ai-note">Codex CLI의 로그인 계정을 사용합니다. 처음 사용한다면 터미널에서 <code>codex login</code>을 실행하세요.</p>
+      </div>
+      <p id="ai-save-status" role="status" aria-live="polite"></p>
     </div>
 
     <!-- 요약 프롬프트. 편집칸은 전부 .set-prompt + data-key 하나로만 구분한다 —
@@ -707,15 +724,16 @@
 
       <div class="set-prompt-row">
         <div class="set-prompt-head">
-          <span>공통 규칙 (3탭 공통)</span>
+          <span>공통 규칙 (4탭 공통)</span>
           <button type="button" class="set-prompt-reset" data-key="common">기본값</button>
         </div>
         <textarea class="set-prompt" id="set-prompt-common" data-key="common" rows="9" spellcheck="false" maxlength="8000"></textarea>
       </div>
 
+      <p class="set-help">직접 수정한 프롬프트는 유지됩니다. 새 읽기 안내를 적용하려면 해당 칸의 기본값 버튼을 누르고 저장하세요.</p>
       <div class="set-subtabs" id="set-prompt-tabs">
-        <button type="button" class="set-subtab on" id="set-prompt-tab-overview" data-tab="overview">Overview</button>
-        <button type="button" class="set-subtab" id="set-prompt-tab-narrative" data-tab="narrative">핵심 정리</button>
+        <button type="button" class="set-subtab on" id="set-prompt-tab-overview" data-tab="overview">핵심 파악</button>
+        <button type="button" class="set-subtab" id="set-prompt-tab-narrative" data-tab="narrative">작동 원리</button>
         <button type="button" class="set-subtab" id="set-prompt-tab-sections" data-tab="sections">절별 요약</button>
         <button type="button" class="set-subtab" id="set-prompt-tab-flow" data-tab="flow">흐름도</button>
       </div>
@@ -723,14 +741,14 @@
       <div class="set-prompt-panel on" id="set-prompt-panel-overview" data-tab="overview">
         <div class="set-prompt-row">
           <div class="set-prompt-head">
-            <span>Overview 지시문</span>
+            <span>핵심 파악 지시문</span>
             <button type="button" class="set-prompt-reset" data-key="overviewSpec">기본값</button>
           </div>
           <textarea class="set-prompt" id="set-prompt-overview-spec" data-key="overviewSpec" rows="11" spellcheck="false" maxlength="8000"></textarea>
         </div>
         <div class="set-prompt-row">
           <div class="set-prompt-head">
-            <span>Overview 마무리 지시 (본문 뒤에 한 번 더 붙습니다)</span>
+            <span>핵심 파악 마무리 지시 (본문 뒤에 한 번 더 붙습니다)</span>
             <button type="button" class="set-prompt-reset" data-key="overviewTail">기본값</button>
           </div>
           <textarea class="set-prompt" id="set-prompt-overview-tail" data-key="overviewTail" rows="3" spellcheck="false" maxlength="8000"></textarea>
@@ -740,14 +758,14 @@
       <div class="set-prompt-panel" id="set-prompt-panel-narrative" data-tab="narrative">
         <div class="set-prompt-row">
           <div class="set-prompt-head">
-            <span>핵심 정리 지시문</span>
+            <span>작동 원리 지시문</span>
             <button type="button" class="set-prompt-reset" data-key="narrativeSpec">기본값</button>
           </div>
           <textarea class="set-prompt" id="set-prompt-narrative-spec" data-key="narrativeSpec" rows="11" spellcheck="false" maxlength="8000"></textarea>
         </div>
         <div class="set-prompt-row">
           <div class="set-prompt-head">
-            <span>핵심 정리 마무리 지시 (본문 뒤에 한 번 더 붙습니다)</span>
+            <span>작동 원리 마무리 지시 (본문 뒤에 한 번 더 붙습니다)</span>
             <button type="button" class="set-prompt-reset" data-key="narrativeTail">기본값</button>
           </div>
           <textarea class="set-prompt" id="set-prompt-narrative-tail" data-key="narrativeTail" rows="3" spellcheck="false" maxlength="8000"></textarea>

@@ -16,7 +16,7 @@ const R = '.pdf-pane[data-side=right]';
 const setStorage = (app, dir) => app.evaluate((_electron, d) => {
   const cache = process.mainModule.require('module')._cache;
   const key = Object.keys(cache).find((k) => k.replace(/\\/g, '/').endsWith('/src/main/settings.js'));
-  cache[key].exports.set({ storageDir: d });
+  cache[key].exports.set({ storageDir: d, translate: { engine: 'agy' } });
 }, dir);
 
 // 요청 횟수를 세는 로컬 서버. "다시 받지 않는다"를 증명하려면 이 카운터가 유일하게 믿을 신호다.

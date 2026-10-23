@@ -1,5 +1,6 @@
 // src/main/fileService.js
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 
 function isBinary(buf) {
   const n = Math.min(buf.length, 8000);
@@ -34,7 +35,7 @@ function writeFile(filePath, content, opts) {
 
 function readBytes(filePath) {
   const bytes = fs.readFileSync(filePath);
-  return { bytes, byteSize: bytes.length };
+  return { bytes, byteSize: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
 }
 
 module.exports = { readFile, writeFile, detectEol, isBinary, readBytes };

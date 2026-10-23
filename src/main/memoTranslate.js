@@ -92,7 +92,7 @@ function cleanTranslation(raw) {
 
 function pickEngine(translateSettings) {
   const e = translateSettings?.engine;
-  return e === 'claude' || e === 'agy' ? e : 'agy';
+  return e === 'claude' || e === 'agy' || e === 'codex' ? e : 'agy';
 }
 
 /**
@@ -128,8 +128,14 @@ function translateMemo(markdown, opts = {}) {
   const prompt = buildTranslatePrompt(src);
   // detached: 자신만의 프로세스 그룹을 갖게 해, 취소 시 CLI가 띄운 자식들까지 함께 정리한다.
   const child = spawn(bin, buildSummaryArgs(eng, prompt, translateSettings), {
-    env: envWithPath(env), detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+    env: envWithPath(env), detached: true, stdio: [eng === 'codex' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+    ...(eng === 'codex' ? { cwd: require('node:os').tmpdir() } : {}),
   });
+
+  if (eng === 'codex') {
+    child.stdin.on('error', () => {}); // early CLI exit is reported by close/error
+    child.stdin.end(prompt);
+  }
 
   const chunks = [];
   let bytes = 0;
@@ -186,7 +192,8 @@ function translateMemo(markdown, opts = {}) {
     if (bytes > maxOutputBytes) { abort('overflow'); return; }
     chunks.push(chunk);
   });
-  child.stderr.resume(); // 읽지 않으면 파이프가 차서 CLI가 멈춘다(내용은 쓰지 않는다)
+  let stderrTail = '';
+  child.stderr.on('data', d => { stderrTail = (stderrTail + d.toString('utf8')).slice(-1200); });
 
   child.on('error', (e) => rejectOnce(new Error(`${eng} 실행 실패: ${e.message}`)));
   child.on('close', (code) => {
@@ -194,7 +201,7 @@ function translateMemo(markdown, opts = {}) {
     if (killTimer) { clearTimeout(killTimer); killTimer = null; }
     if (settled) return;
     if (stop) return rejectOnce(new Error(stopMessage(stop)));
-    if (code !== 0) return rejectOnce(new Error(`${eng} 오류 (exit ${code})`));
+    if (code !== 0) return rejectOnce(new Error(`${eng} 오류 (exit ${code})\n${stderrTail.trim()}`));
     const content = cleanTranslation(Buffer.concat(chunks).toString('utf8'));
     if (!content) return rejectOnce(new Error('번역 결과가 비어 있습니다. 다시 시도해 주세요.'));
     return resolveOnce({ content, truncated });

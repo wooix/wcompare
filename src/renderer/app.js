@@ -6,10 +6,13 @@ import { setupVim, toggleVim, setSaveHandler, getActiveSide } from './vimBinding
 import { setStatus } from './toolbar.js';
 import { setupDnd } from './dnd.js';
 import { createDualView } from './pdfDualView.js';
+import { prepareReadingSource, READING_VERSION } from '../shared/readingSource.js';
 import { createSummaryPanel } from './summaryPanel.js';
 import { createPaneSplit } from './paneSplit.js';
+import './modern.css';
+import { initModernUX } from './modernUX.js';
 import { createMemoView } from './memoView.js';
-import { flattenOutline, sectionRanges, sectionsDigest, outlineDigest } from './pdfOutline.js';
+import { flattenOutline, sectionRanges, outlineDigest } from './pdfOutline.js';
 import { createMdToc } from './mdToc.js';
 import { normalizeEvent, hasModifier, format as fmtShortcut, isReserved, ACTIONS } from './shortcuts.js';
 import {
@@ -81,10 +84,11 @@ async function save(side = getActiveSide()) {
   linters[side].cancel(); linters[side].request();
   refreshStatus();
 }
-setSaveHandler(save);
+setSaveHandler(() => mode === 'memo' ? saveAllMemo() : save());
 
 // ===== pdf mode =====
 let mode = 'diff';
+let reloadingFiles = false;
 let dualView = null;
 let summaryPanel = null;
 let paneSplit = null; // 요약 폭 드래그 손잡이 — dualView와 요약 패널이 생긴 뒤에 만들어진다
@@ -95,7 +99,9 @@ let memoTranslating = false;
 let memoTranslateStart = 0;
 let memoTranslateTimer = 0;
 const pdfPaths = { left: null, right: null };
+const pdfHashes = { left: null, right: null }; // pane별 마지막으로 화면에 올린 PDF 내용 해시
 let pdfState = null;
+let pdfPageEdited = false; // 페이지 입력의 실제 사용자 수정만 이동으로 처리한다
 
 // ===== PDF 보기 형태 =====
 // compare 원문|번역 · summary 원문|요약 · full 원문|번역|요약.
@@ -106,7 +112,7 @@ let pdfState = null;
 // 취향"에 가깝다(Night/Dict 토글과 같은 성격).
 const LAYOUTS = ['compare', 'summary', 'full'];
 const SUMMARY_KINDS = ['overview', 'narrative', 'sections', 'flow'];
-const SUMMARY_LABEL = { overview: 'Overview', narrative: '핵심 정리', sections: '절별 요약', flow: '흐름도' };
+const SUMMARY_LABEL = { overview: '핵심 파악', narrative: '작동 원리', sections: '근거 확인', flow: '한눈에 보기' };
 let layout = 'compare';
 try { const v = localStorage.getItem('wc-layout'); if (LAYOUTS.includes(v)) layout = v; } catch { /* 스토리지 불가 */ }
 
@@ -180,7 +186,18 @@ function ensureDualView() {
   // 요약 패널은 dualView가 만든 .pdf-panes와 형제로 붙는다(네 번째 열).
   // 던진 오류는 패널이 스스로 인라인 표시하므로 여기서 try/catch로 감싸지 않는다.
   summaryPanel = createSummaryPanel($('pdfview'), {
-    onGenerate: () => generateSummary(),
+    onGenerate: () => generateSummary([summaryPanel.getTab()]),
+    onGenerateAll: () => generateSummary(),
+    onSourcePage: async (page) => {
+      const doc = summaryDoc;
+      const side = summarySide();
+      if (!side) return false;
+      if (side === 'right' && layout === 'summary') setLayout('full');
+      // Revealing the source pane triggers PDF width fitting. Navigate after that layout settles.
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      if (summaryDoc !== doc || pdfPaths[side] !== doc) return false;
+      return dualView.jumpToSource(side, page);
+    },
     // 재생성은 지금 보고 있는 탭 하나만 — 다른 두 탭의 캐시를 날리지 않는다.
     onRegenerate: () => generateSummary([summaryPanel.getTab()]),
     onCopy: () => exportSummary(false),
@@ -210,7 +227,12 @@ function renderFindCount({ query, left, right }) {
 function renderPdfStatus(st) {
   pdfState = st;
   $('pdf-total').textContent = String(Math.max(st.left.count, st.right.count));
-  $('pdf-page').value = String(st.left.page || st.right.page || 1);
+  const pageInput = $('pdf-page');
+  // 입력 중인 숫자는 유지한다. 스크롤 상태 갱신이 input.value를 다시 쓰면, 다음 blur의
+  // change 이벤트가 그 숫자로 양쪽 문서를 예기치 않게 이동시킬 수 있다.
+  if (!pdfPageEdited || document.activeElement !== pageInput) {
+    pageInput.value = String(st.left.page || st.right.page || 1);
+  }
   $('btn-sync').textContent = 'Sync: ' + (st.sync ? 'ON' : 'OFF');
   $('btn-sync').classList.toggle('on', !!st.sync);
   $('btn-fit').textContent = 'Fit: ' + (st.fit ? 'ON' : 'OFF');
@@ -238,6 +260,13 @@ function syncOpenFiles() {
   const entries = openFileEntries()
     .filter(([, path]) => path)
     .map(([label, path]) => ({ label, path }));
+  const reload = $('btn-reload-files');
+  if (reload) {
+    const busy = reloadingFiles || (mode === 'pdf' && translating) || (mode === 'memo' && memoTranslating);
+    reload.disabled = busy || !entries.length;
+    reload.title = busy ? '진행 중인 작업이 끝나면 파일을 갱신할 수 있습니다'
+      : entries.length ? `현재 화면의 파일 ${entries.length}개를 디스크에서 다시 읽습니다` : '열린 파일이 없습니다';
+  }
   window.wcompare.setOpenFiles(entries).catch(() => {}); // 메뉴 장식이라 실패해도 조용히 넘어간다
 }
 
@@ -268,11 +297,12 @@ function setMode(m) {
 // 열기 본체 — 실패를 그대로 던진다. 오류를 자기 자리에 표시하는 호출자(URL 패널)가 쓴다.
 async function openPdfOrThrow(side, p) {
   // 메인이 정규화한 경로를 그대로 보관 — 번역 IPC의 화이트리스트 키와 어긋나지 않게.
-  const { path: real, bytes } = await window.wcompare.readBytes(p);
+  const { path: real, bytes, sha256 } = await window.wcompare.readBytes(p);
   ensureDualView();
   setMode('pdf');
   await dualView.openSide(side, { bytes, path: real });
   pdfPaths[side] = real;
+  pdfHashes[side] = sha256;
   // 지금 형태가 이 pane을 감추고 있으면 형태를 넓힌다. 사용자가 방금 연 문서를 숨긴 채 두지 않기
   // 위해서다 — 특히 번역은 완료되면 반대편 pane에 결과를 여는데, 요약형(오른쪽 숨김)에서는
   // 수 분을 기다린 번역본이 보이지 않는 열에 떨어진다.
@@ -331,6 +361,7 @@ async function switchSides() {
   if (translating) return;
   await dualView?.switchSides();
   [pdfPaths.left, pdfPaths.right] = [pdfPaths.right, pdfPaths.left];
+  [pdfHashes.left, pdfHashes.right] = [pdfHashes.right, pdfHashes.left];
   // 요약 대상은 "왼쪽 우선"이라 교체와 함께 바뀐다 → 패널도 새 대상 문서로 다시 묶는다.
   // 빠뜨리면 닫힌 뒤에도 앞 문서 요약이 남아 새 문서용 생성 버튼이 사라진다.
   await syncSummaryToDoc();
@@ -384,9 +415,7 @@ async function syncSummaryToDoc() {
   if (next) await restoreSummary(next); else resetSummaryPanel();
 }
 
-// 프롬프트 재료를 모은다. 목차가 있으면 각 절의 페이지 범위로 본문을 잘라 "절 제목 + 그 절 본문"
-// 형태로 넘긴다 — 모델이 목차 순서를 그대로 따르게 하려는 것이 목적이다(요구사항의 "목차 순서에 따른 요약").
-// 목차가 없거나 dest를 페이지로 못 바꾸면 페이지 순서 그대로 이어 붙인 통짜 본문으로 물러선다.
+// 원문의 실제 페이지 경계를 유지한다. 목차는 구조 안내로만 전달하고 본문을 중복하지 않는다.
 async function collectSummaryMaterial(side) {
   const [title, pageTexts, rawOutline] = await Promise.all([
     dualView.getTitle(side),
@@ -399,17 +428,12 @@ async function collectSummaryMaterial(side) {
   const withPages = [];
   for (const it of flat) withPages.push({ ...it, startPage: await dualView.destToPage(side, it.dest) });
   const ranges = sectionRanges(withPages, pageTexts.length);
-  return {
-    title: title || '',
-    outline: ranges.length ? outlineDigest(ranges) : null,
-    text: ranges.length ? sectionsDigest(ranges, pageTexts) : pageTexts.join('\n\n'),
-  };
+  const source = prepareReadingSource(pageTexts);
+  return { title: title || '', outline: ranges.length ? outlineDigest(ranges) : null, ...source };
 }
 
-// 탭을 순서대로 만든다. 기본은 세 탭 전부(최초 생성)지만, "다시 생성"은 지금 보는 탭 하나만
-// 넘겨받는다(kinds). Overview가 제일 짧고 빨라 먼저 띄우면(전체 생성일 때) 나머지를 기다리는
-// 동안 읽을거리가 생긴다. 하나가 실패해도 나머지는 계속 만든다 — 흐름도 하나가 깨졌다고
-// 요약 전체를 잃는 것이 가장 아까운 실패이기 때문.
+// 첫 생성은 선택한 탭 하나. 전체 만들기만 네 탭을 순서대로 요청한다.
+// 재생성하지 않은 캐시와 실패한 탭의 기존 내용은 보존한다.
 async function generateSummary(kinds = SUMMARY_KINDS) {
   // 호출자가 뭘 넘기든 SUMMARY_KINDS의 부분집합으로만 좁힌다 — 낯선 kind나 중복이 그대로
   // 진행률 분모·저장 경로까지 흘러들지 않게(방어적 필터링), 순서도 SUMMARY_KINDS 기준으로 고정.
@@ -437,16 +461,22 @@ async function generateSummary(kinds = SUMMARY_KINDS) {
   // 빈 값이 아니라 기존 캐시에서 시작한다 — summaryStore.save는 병합 없이 통째로 덮어쓰므로,
   // 여기서 미리 깔아 두지 않으면 재생성하지 않은 탭과(아래) 실패한 탭의 캐시가 저장 시 함께
   // 날아간다(예전엔 실패한 kind가 ''로 저장돼 화면엔 옛 내용이 남는데 캐시는 사라지는 불일치가 있었다).
-  const parts = { overview: '', sections: '', flow: '' };
+  const parts = { overview: '', narrative: '', sections: '', flow: '' };
+  let readingVersions = {};
+  let previousTruncated = false;
   try {
     const prev = await window.wcompare.summary.load(docPath);
     if (prev?.parts) Object.assign(parts, prev.parts);
+    readingVersions = { ...prev?.meta?.readingVersions };
+    previousTruncated = !!prev?.meta?.truncated;
   } catch (e) {
     console.warn('요약 캐시 선로드 실패(무시):', e?.message || e); // 캐시가 없어도 생성은 계속된다
   }
 
+  if (!alive()) return;
   const failed = [];
-  let truncated = false;
+  let truncated = !!material.truncated || (kinds.length < SUMMARY_KINDS.length && previousTruncated);
+  summaryPanel.setSourceTruncated(truncated);
   let done = 0;
   let produced = 0; // 이번 실행이 실제로 만들어 낸 파트 수 — 저장 여부를 이걸로 판단한다
   // 단일 탭 재생성은 단계가 하나뿐이라 ratio가 끝날 때까지 0%로 굳는다 — createBusy는 ratio가
@@ -464,10 +494,12 @@ async function generateSummary(kinds = SUMMARY_KINDS) {
       try {
         const res = await window.wcompare.summarize({ path: docPath, kind, ...material });
         parts[kind] = res.content;
+        readingVersions[kind] = READING_VERSION;
         produced++;
         truncated = truncated || !!res.truncated;
         if (!alive()) return; // 기다리는 사이에 문서가 바뀌었다면 새 화면에 앞 문서 요약을 쓰지 않는다
         summaryPanel.setPart(kind, res.content);
+        summaryPanel.setVersions(readingVersions);
         // 여러 탭을 한꺼번에 만들 때만 완성된 overview로 점프한다 — 탭 하나만 재생성하는 중에는
         // 사용자가 보고 있던(재생성을 누른) 탭을 그대로 두어야 한다("낚아채지 않는다").
         if (kind === 'overview' && kinds.length > 1) summaryPanel.setTab('overview');
@@ -487,7 +519,7 @@ async function generateSummary(kinds = SUMMARY_KINDS) {
     // 채워져 있어 내용 검사는 항상 참이 되고, 그대로 두면 실패만 한 재생성이 내용은 같은 파일을
     // 다시 쓰면서 meta.truncated만 이번 실행 값(false)으로 조용히 뒤집어 놓는다.
     if (produced) {
-      window.wcompare.summary.save(docPath, parts, { truncated })
+      window.wcompare.summary.save(docPath, parts, { truncated, readingVersions })
         .catch((e) => console.warn('요약 저장 실패(무시):', e?.message || e));
     }
   }
@@ -530,7 +562,10 @@ async function restoreSummary(docPath) {
   resetSummaryPanel(); // 앞 문서의 내용도, 진행 중이던 생성의 잠금도 함께 푼다
   summaryDoc = docPath; // reset이 null로 되돌린 뒤에 이 문서로 다시 묶는다
   try {
-    const { parts } = await window.wcompare.summary.load(docPath);
+    const { parts, meta } = await window.wcompare.summary.load(docPath);
+    if (summaryDoc !== docPath) return;
+    summaryPanel.setVersions(meta?.readingVersions || {});
+    summaryPanel.setSourceTruncated(meta?.truncated);
     for (const kind of SUMMARY_KINDS) if (parts?.[kind]) summaryPanel.setPart(kind, parts[kind]);
   } catch (e) {
     console.warn('요약 복원 실패(무시):', e?.message || e);
@@ -543,6 +578,7 @@ let translating = false;
 let translateTarget = null; // 진행 상황을 띄울 빈 pane
 let translateDone = 0;
 let translateTotal = 0;
+let directCodexPdf = false;
 let translateStart = 0;
 let translateTimer = 0;
 const loadedPdfSides = () => ['left', 'right'].filter((s) => pdfPaths[s]);
@@ -571,9 +607,9 @@ function showTranslateProgress(sub) {
   const pages = translateTotal ? `${translateDone} / ${translateTotal} 페이지` : `${translateDone} 페이지`;
   dualView?.setBusy(translateTarget, {
     title: '한국어 번역 중…',
-    sub: sub ?? pages,
-    hint: eta ? `경과 ${elapsed} · 남은 시간 약 ${eta}` : `경과 ${elapsed} · 남은 시간 계산 중…`,
-    ratio: translateTotal ? translateDone / translateTotal : undefined,
+    sub: sub ?? (directCodexPdf ? 'Codex가 원본 PDF 전체를 번역하고 레이아웃을 구성하는 중' : pages),
+    hint: directCodexPdf ? `경과 ${elapsed} · 완료된 PDF를 기다리는 중` : eta ? `경과 ${elapsed} · 남은 시간 약 ${eta}` : `경과 ${elapsed} · 남은 시간 계산 중…`,
+    ratio: !directCodexPdf && translateTotal ? translateDone / translateTotal : undefined,
   });
 }
 
@@ -650,6 +686,7 @@ async function translatePdf(force = false) {
   const [side] = loadedPdfSides();
   if (!side) return;
   const src = pdfPaths[side];
+  directCodexPdf = $('set-translate-engine').value === 'codex';
 
   translating = true;
   translateTarget = side === 'left' ? 'right' : 'left';
@@ -802,6 +839,7 @@ async function closeFile(side) {
     if (translating) return; // 번역 중 문서 상태 변경 금지 (switch와 동일)
     await dualView?.closeSide(side);
     pdfPaths[side] = null;
+    pdfHashes[side] = null;
     await syncSummaryToDoc(); // 닫힌 문서가 요약의 주인이었으면 남은 문서로 갈아 끼우고, 없으면 비운다
     updatePdfBtns();
     refreshTranslationInfo();
@@ -814,9 +852,92 @@ async function closeFile(side) {
   }
 }
 
+// 현재 모드에서 실제로 열려 있는 파일만 디스크에서 다시 읽는다. 읽기에 실패하면 편집기에는
+// 손대지 않고, 미저장 내용은 사용자가 저장/버림/취소 중 하나를 고른 뒤에만 교체한다.
+async function reloadFiles() {
+  if (reloadingFiles || (mode === 'pdf' && translating) || (mode === 'memo' && memoTranslating)) return;
+  const currentMode = mode;
+  const paths = currentMode === 'memo'
+    ? [['source', memoView?.getDoc('source').path], ['translation', memoView?.getDoc('translation').path]].filter(([, p]) => p)
+    : ['left', 'right'].map(side => [side, currentMode === 'pdf' ? pdfPaths[side] : editorApi.getState(side).path]).filter(([, p]) => p);
+  if (!paths.length) return;
+  reloadingFiles = true;
+  syncOpenFiles();
+  try {
+    let reloadNote = '';
+    const dirty = currentMode === 'memo' ? hasUnsavedMemo()
+      : currentMode === 'diff' && paths.some(([side]) => editorApi.getState(side).dirty);
+    if (dirty) {
+      const choice = await window.wcompare.confirmReload();
+      if (choice === 'cancel') return;
+      if (choice !== 'save' && choice !== 'discard') return;
+      if (choice === 'save') {
+        if (currentMode === 'memo') await saveAllMemo();
+        else for (const [side] of paths) if (editorApi.getState(side).dirty) await save(side);
+      }
+    }
+    if (mode !== currentMode) return;
+
+    if (currentMode === 'diff') {
+      const files = await Promise.all(paths.map(async ([side, p]) => [side, await window.wcompare.readFile(p)]));
+      if (mode !== 'diff' || paths.some(([side, p]) => editorApi.getState(side).path !== p)) return;
+      if (files.some(([, file]) => file.isBinary)) throw new Error('바이너리로 바뀐 파일이 있습니다. 파일 열기로 확인해 주세요.');
+      const viewStates = Object.fromEntries(paths.map(([side]) => [side, editorApi.innerOf(side).saveViewState()]));
+      for (const [side, file] of files) placeFile(side, file);
+      for (const [side] of paths) if (viewStates[side]) editorApi.innerOf(side).restoreViewState(viewStates[side]);
+      updateTocBtn();
+    } else if (currentMode === 'memo') {
+      const sourcePath = memoView?.getDoc('source').path;
+      if (!sourcePath) return;
+      const transPath = memoView.getDoc('translation').path || await window.wcompare.memo.translationPath(sourcePath);
+      const source = await window.wcompare.readFile(sourcePath);
+      let translation;
+      try { translation = await window.wcompare.readFile(transPath); }
+      catch (e) {
+        if (!/ENOENT|no such file/i.test(ipcMessage(e))) throw e;
+        translation = { path: transPath, content: '', eol: '\n', bom: false };
+      }
+      if (mode !== 'memo' || memoView.getDoc('source').path !== sourcePath) return;
+      const viewState = memoView.captureViewState();
+      memoView.setDoc('source', { ...source, name: memoView.getDoc('source').name });
+      memoView.setDoc('translation', { ...translation, name: '번역본' });
+      memoView.restoreViewState(viewState);
+      refreshMemoBtns();
+    } else {
+      const previousHashes = { ...pdfHashes };
+      const files = await Promise.all(paths.map(async ([side, p]) => ({ side, ...(await window.wcompare.readBytes(p)) })));
+      if (mode !== 'pdf' || paths.some(([side, p]) => pdfPaths[side] !== p)) return;
+      await dualView.reloadSides(files);
+      for (const file of files) pdfHashes[file.side] = file.sha256;
+      const changedSummary = files.find(file => file.path === summaryDoc && previousHashes[file.side] !== file.sha256);
+      if (changedSummary) {
+        // 경로가 같아도 내용이 바뀌었으면 이전 논문 요약을 새 PDF의 설명처럼 보여주지 않는다.
+        try {
+          await window.wcompare.summary.save(changedSummary.path, {});
+          await restoreSummary(changedSummary.path);
+          reloadNote = ' 변경된 PDF의 이전 요약은 초기화했습니다.';
+        } catch (e) {
+          resetSummaryPanel();
+          summaryDoc = changedSummary.path;
+          reloadNote = ` 요약 캐시 정리 실패: ${ipcMessage(e)}`;
+        }
+      }
+      updatePdfBtns();
+      refreshTranslationInfo();
+    }
+    setStatus(`파일 ${paths.length}개를 다시 불러왔습니다.${reloadNote}`);
+  } catch (e) {
+    setStatus(`파일 갱신 실패: ${ipcMessage(e)}`);
+  } finally {
+    reloadingFiles = false;
+    syncOpenFiles();
+  }
+}
+
 // ===== toolbar wiring (by id) =====
 $('btn-open-left').onclick = () => openByDialog('left');
 $('btn-open-right').onclick = () => openByDialog('right');
+$('btn-reload-files').onclick = reloadFiles;
 $('btn-mode-diff').onclick = () => setMode('diff');
 $('btn-mode-pdf').onclick = () => { ensureDualView(); setMode('pdf'); };
 $('btn-mode-memo').onclick = () => { ensureMemoView(); setMode('memo'); };
@@ -913,6 +1034,7 @@ async function loadUserSettings() {
     const s = await window.wcompare.settings.get();
     if (s && s.shortcuts) shortcuts = { ...shortcuts, ...s.shortcuts };
     if (s?.ui?.theme) applyTheme(s.ui.theme);
+    applyTranslateSettings(s.translate);
     applyWordWrap(normalizeWrap(s?.ui?.wordWrap), false);
     applyPaneEqual(normalizeEqual(s?.ui?.paneEqualWidth), false);
   } catch { /* 로드 실패 시 기본값 유지 */ }
@@ -966,12 +1088,6 @@ function ensureMemoView() {
   return memoView;
 }
 
-// 저장 대상은 '지금 포커스가 있는 에디터'다. 두 문서가 각각 dirty를 갖는다.
-function memoTargetSide() {
-  const f = memoView?.focusedSide();
-  return f === 'translation' && memoView.isShowTrans() ? 'translation' : 'source';
-}
-
 function refreshMemoBtns() {
   syncOpenFiles();
   if (!memoView || mode !== 'memo') return;
@@ -981,14 +1097,15 @@ function refreshMemoBtns() {
 
   // 번역 버튼은 PDF와 같이 '실행/취소' 토글이다 — 진행 중에 누르면 취소된다.
   const t = $('btn-memo-translate');
-  t.disabled = !busy && !src.path;
+  const hasText = !!memoView.getValue('source').trim();
+  t.disabled = !busy && !hasText;
   t.textContent = busy ? '번역 취소' : '한국어 번역 ▶';
   t.title = busy ? '진행 중인 번역을 취소합니다'
-    : src.path ? '메모 전체를 한국어로 번역해 번역창에 넣습니다'
-      : '메모를 먼저 만들거나 여세요';
+    : hasText ? '메모 전체를 한국어로 번역해 번역창에 넣습니다'
+      : '번역할 내용을 입력하세요';
 
   // 번역 중에 잠그는 것들 — 왜 잠겼는지를 툴팁으로 말해 준다(PDF의 관용구).
-  $('btn-memo-save').disabled = busy || !src.path || !dirty;
+  $('btn-memo-save').disabled = busy || !dirty;
   $('btn-memo-new').disabled = busy;
   $('memo-list').disabled = busy;
   $('btn-memo-swap').disabled = busy || !memoView.isShowTrans();
@@ -1001,7 +1118,7 @@ function refreshMemoBtns() {
   const main = memoView.mainSide() === 'translation' ? '번역본' : '원문';
   $('memo-status').textContent = src.path
     ? `${src.name}${dirty ? ' •' : ''}   메인: ${main}`
-    : '메모를 새로 만들거나 목록에서 여세요';
+    : dirty ? '저장하지 않은 메모 •' : '바로 입력하거나 메모를 열어 시작하세요';
 }
 
 // 진행 표시. PDF는 페이지 수로 분모를 알지만 메모 번역은 LLM 호출 1회라 진행 단위가 없다 →
@@ -1044,13 +1161,24 @@ async function openMemo(p) {
   memoView.focus('source');
 }
 
+let memoPathTask = null;
+async function ensureMemoPaths() {
+  if (memoView.getDoc('source').path) return;
+  if (!memoPathTask) memoPathTask = (async () => {
+    const file = await window.wcompare.memo.create('무제');
+    const koPath = await window.wcompare.memo.translationPath(file.path);
+    memoView.setPath('source', file.path, file.name);
+    memoView.setPath('translation', koPath, '번역본');
+    await refreshMemoList();
+  })().finally(() => { memoPathTask = null; });
+  await memoPathTask;
+}
 async function saveMemo(side) {
+  await ensureMemoPaths();
   const doc = memoView.getDoc(side);
-  if (!doc.path) return;
-  await window.wcompare.writeFile({
-    path: doc.path, content: memoView.getValue(side), eol: doc.eol, bom: doc.bom,
-  });
-  memoView.setSaved(side);
+  const content = memoView.getValue(side);
+  await window.wcompare.writeFile({ path: doc.path, content, eol: doc.eol, bom: doc.bom });
+  memoView.setSaved(side, content);
   refreshMemoBtns();
 }
 
@@ -1061,9 +1189,48 @@ async function saveAllMemo() {
   }
 }
 
+let memoGuardPending = false;
+let memoTranslateTask = null;
+let memoStopping = false;
+let memoCancelRequested = false;
+function hasUnsavedMemo() {
+  return ['source', 'translation'].some(side => {
+    const doc = memoView?.getDoc(side);
+    return doc?.dirty && (doc.path || !!memoView.getValue(side).trim());
+  });
+}
+async function guardMemoChanges() {
+  if (!hasUnsavedMemo() && !memoTranslating) return true;
+  if (memoGuardPending) return false;
+  memoGuardPending = true;
+  try {
+    const choice = await window.wcompare.memo.confirmSave();
+    if (choice === 'cancel') return false;
+    if (memoTranslating) {
+      memoStopping = true;
+      await window.wcompare.memo.cancelTranslate();
+      await memoTranslateTask;
+      memoStopping = false;
+    }
+    if (choice === 'save') {
+      await saveAllMemo();
+      if (hasUnsavedMemo()) return false;
+    }
+    return true;
+  } catch (e) {
+    alert('메모를 저장하지 못했습니다. 창을 닫지 않았습니다: ' + ipcMessage(e));
+    return false;
+  } finally { memoStopping = false; memoGuardPending = false; }
+}
+window.wcompare.onCloseRequested(async () => {
+  const confirmed = await guardMemoChanges();
+  await window.wcompare.finishClose(confirmed);
+});
+
 $('btn-memo-new').onclick = async () => {
   ensureMemoView();
   setMode('memo');
+  if (!(await guardMemoChanges())) return;
   const m = await window.wcompare.memo.create('무제');
   await openMemo(m.path);
   await refreshMemoList();
@@ -1073,11 +1240,12 @@ $('memo-list').onchange = async (e) => {
   const p = e.target.value;
   e.target.value = '';
   if (!p) return;
+  if (!(await guardMemoChanges())) return;
   setMode('memo');
   await openMemo(p).catch((err) => setStatus(`메모 열기 실패: ${ipcMessage(err)}`));
 };
 
-$('btn-memo-save').onclick = () => saveMemo(memoTargetSide()).catch((e) => setStatus(ipcMessage(e)));
+$('btn-memo-save').onclick = () => saveAllMemo().catch((e) => setStatus(ipcMessage(e)));
 $('btn-memo-toggle-trans').onclick = () => { memoView.setShowTrans(!memoView.isShowTrans()); refreshMemoBtns(); };
 $('btn-memo-toggle-preview').onclick = () => { memoView.setShowPreview(!memoView.isShowPreview()); refreshMemoBtns(); };
 $('btn-memo-swap').onclick = () => { memoView.swap(); refreshMemoBtns(); };
@@ -1087,7 +1255,7 @@ $('btn-memo-swap').onclick = () => { memoView.swap(); refreshMemoBtns(); };
 async function translateMemo() {
   if (memoTranslating) { await window.wcompare.memo.cancelTranslate(); return; }
   const src = memoView?.getDoc('source');
-  if (!src?.path) return;
+  if (!src || !memoView.getValue('source').trim()) return;
   // 결정 8: 번역본이 마지막 번역 이후 사람 손을 탔을 때만 되묻는다. 안 건드렸으면 조용히 진행.
   if (memoView.translationEdited()
       && !confirm('번역본을 손본 내용이 사라집니다. 다시 번역할까요?')) return;
@@ -1108,7 +1276,8 @@ async function translateMemo() {
       ? '번역 완료 — 원문이 길어 일부만 번역했습니다. 저장하지 않으면 사라집니다'
       : '번역 완료 — 저장하지 않으면 사라집니다');
   } catch (e) {
-    alert('번역 실패: ' + ipcMessage(e));
+    if (memoStopping || memoCancelRequested) setStatus('메모 번역을 취소했습니다');
+    else alert('번역 실패: ' + ipcMessage(e));
   } finally {
     clearInterval(memoTranslateTimer);
     memoView.setBusy(null);
@@ -1118,7 +1287,15 @@ async function translateMemo() {
   }
 }
 
-$('btn-memo-translate').onclick = () => translateMemo();
+$('btn-memo-translate').onclick = () => {
+  if (memoTranslating) {
+    memoCancelRequested = true;
+    return window.wcompare.memo.cancelTranslate().catch(e => setStatus(ipcMessage(e)));
+  }
+  memoCancelRequested = false;
+  memoTranslateTask = translateMemo();
+  return memoTranslateTask;
+};
 
 refreshMemoList();
 
@@ -1271,6 +1448,10 @@ buildShortcutRows();
 // ===== 설정창: 번역 엔진·모델 =====
 // translateModelLists는 datalist를 채우는 현재 목록(agyModels/claudeModels)의 로컬 사본 —
 // "목록 새로고침"·모델 저장이 성공할 때마다 서버(settings)가 돌려준 값으로 갱신한다.
+let codexCatalog = [];
+let codexCatalogReady = false;
+let codexCatalogRequest = 0;
+let savedCodexModel = '';
 let translateModelLists = { agyModels: [], claudeModels: [] };
 function fillDatalist(id, models) {
   const dl = $(id);
@@ -1285,11 +1466,58 @@ function fillDatalist(id, models) {
 function applyTranslateSettings(t) {
   if (!t) return;
   translateModelLists = { agyModels: t.agyModels || [], claudeModels: t.claudeModels || [] };
-  $('set-translate-engine').value = t.engine || 'agy';
+  $('set-translate-engine').value = t.engine || 'codex';
+  savedCodexModel = t.codexModel || '';
+  renderCodexModels(savedCodexModel);
+  fillCodexEfforts(t.codexEffort || '', true);
+  for (const el of document.querySelectorAll('[data-engine-options]')) el.hidden = el.dataset.engineOptions !== $('set-translate-engine').value;
+  const badge = $('ai-settings-shortcut');
+  if (badge) badge.textContent = `${t.engine || 'codex'} · ${t[(t.engine || 'codex') + 'Model'] || '기본 모델'}`;
   $('set-agy-model').value = t.agyModel || '';
   $('set-claude-model').value = t.claudeModel || '';
   fillDatalist('agy-model-list', translateModelLists.agyModels);
   fillDatalist('claude-model-list', translateModelLists.claudeModels);
+}
+function renderCodexModels(selected) {
+  const select = $('set-codex-model');
+  const options = codexCatalog.map(m => new Option(m.name === m.id ? m.id : `${m.name} · ${m.id}`, m.id));
+  if (selected && !codexCatalog.some(m => m.id === selected)) {
+    const old = new Option(`저장된 모델: ${selected} (현재 목록에 없음)`, selected);
+    old.disabled = true;
+    options.unshift(old);
+  }
+  if (!options.length) options.push(new Option('Codex 모델을 불러오는 중…', ''));
+  select.replaceChildren(...options);
+  select.value = selected && options.some(option => option.value === selected) ? selected : options[0].value;
+  select.disabled = !codexCatalogReady || !codexCatalog.length;
+}
+async function refreshCodexModels() {
+  const request = ++codexCatalogRequest;
+  const status = $('set-codex-model-status');
+  const button = $('set-codex-refresh');
+  codexCatalog = [];
+  codexCatalogReady = false;
+  renderCodexModels(savedCodexModel);
+  fillCodexEfforts($('set-codex-effort').value, true);
+  button.disabled = true;
+  status.textContent = 'Codex CLI에서 모델 목록을 확인하는 중…';
+  try {
+    const result = await window.wcompare.codex.models();
+    if (request !== codexCatalogRequest) return;
+    if (!result?.ok) throw new Error(result?.error || '알 수 없는 오류');
+    codexCatalog = result.models || [];
+    codexCatalogReady = true;
+    renderCodexModels(savedCodexModel);
+    fillCodexEfforts($('set-codex-effort').value, true);
+    status.textContent = codexCatalog.length
+      ? `Codex가 알려준 모델 ${codexCatalog.length}개 · 설정을 열 때마다 다시 확인합니다.`
+      : 'Codex가 선택 가능한 모델을 알려주지 않았습니다.';
+  } catch (error) {
+    if (request !== codexCatalogRequest) return;
+    status.textContent = `Codex 모델 조회 실패: ${ipcMessage(error)}`;
+  } finally {
+    if (request === codexCatalogRequest) button.disabled = false;
+  }
 }
 // 입력한 모델이 목록에 없으면 그 목록에 추가해 사용자 정의 모델을 유지한다(통째 교체 배열).
 function withCustomModel(list, value) {
@@ -1298,20 +1526,54 @@ function withCustomModel(list, value) {
 }
 function saveTranslateEngine() {
   window.wcompare.settings.set({ translate: { engine: $('set-translate-engine').value } })
-    .then((s) => applyTranslateSettings(s?.translate)).catch(() => {});
+    .then((s) => { applyTranslateSettings(s?.translate); $('ai-save-status').textContent = '저장됨 · 다음 작업부터 적용됩니다'; }).catch((e) => { $('ai-save-status').textContent = '저장 실패: ' + ipcMessage(e); });
 }
 function saveAgyModel() {
   const v = $('set-agy-model').value.trim();
   const agyModels = withCustomModel(translateModelLists.agyModels, v);
   window.wcompare.settings.set({ translate: { agyModel: v, agyModels } })
-    .then((s) => applyTranslateSettings(s?.translate)).catch(() => {});
+    .then((s) => { applyTranslateSettings(s?.translate); $('ai-save-status').textContent = '저장됨 · 다음 작업부터 적용됩니다'; }).catch((e) => { $('ai-save-status').textContent = '저장 실패: ' + ipcMessage(e); });
 }
 function saveClaudeModel() {
   const v = $('set-claude-model').value.trim();
   const claudeModels = withCustomModel(translateModelLists.claudeModels, v);
   window.wcompare.settings.set({ translate: { claudeModel: v, claudeModels } })
-    .then((s) => applyTranslateSettings(s?.translate)).catch(() => {});
+    .then((s) => { applyTranslateSettings(s?.translate); $('ai-save-status').textContent = '저장됨 · 다음 작업부터 적용됩니다'; }).catch((e) => { $('ai-save-status').textContent = '저장 실패: ' + ipcMessage(e); });
 }
+function fillCodexEfforts(selected, preserveUnsupported = false) {
+  const names = { '': 'Codex 기본값', none: '없음 · none', minimal: '최소 · minimal', low: '빠르게 · low', medium: '보통 · medium', high: '깊게 · high', xhigh: '더 깊게 · xhigh', max: '최대 · max', ultra: '최상 · ultra' };
+  const model = codexCatalog.find(m => m.id === $('set-codex-model').value);
+  const efforts = model ? (model.efforts || []) : (selected ? [selected] : []);
+  const values = ['', ...efforts];
+  const select = $('set-codex-effort');
+  const options = values.map(v => new Option(names[v] || v, v));
+  const unsupported = !!model && !!selected && !values.includes(selected) && preserveUnsupported;
+  if (unsupported) {
+    const old = new Option(`저장된 값: ${selected} (현재 모델 미지원)`, selected);
+    old.disabled = true;
+    options.unshift(old);
+  }
+  select.replaceChildren(...options);
+  select.value = values.includes(selected) || unsupported ? selected : (values.includes(model?.defaultEffort) ? model.defaultEffort : '');
+  select.disabled = !codexCatalogReady || !model;
+  $('effort-help').textContent = unsupported
+    ? '저장된 추론 강도가 현재 모델의 지원 목록에 없습니다. 지원되는 값을 다시 선택해 주세요.'
+    : '선택한 모델에 대해 Codex가 알려준 추론 강도만 표시합니다.';
+}
+async function saveCodexSettings() {
+  const status = $('ai-save-status');
+  status.textContent = '저장 중…';
+  try {
+    const v = $('set-codex-model').value;
+    if (!codexCatalogReady || !codexCatalog.some(m => m.id === v)) throw new Error('Codex 목록에서 모델을 선택해 주세요.');
+    const s = await window.wcompare.settings.set({ translate: { codexModel: v, codexEffort: $('set-codex-effort').value } });
+    applyTranslateSettings(s.translate);
+    status.textContent = '저장됨 · 다음 작업부터 적용됩니다';
+  } catch (e) { status.textContent = '저장 실패: ' + ipcMessage(e); }
+}
+$('set-codex-model').onchange = () => { fillCodexEfforts($('set-codex-effort').value); saveCodexSettings(); };
+$('set-codex-effort').onchange = saveCodexSettings;
+$('set-codex-refresh').onclick = refreshCodexModels;
 $('set-translate-engine').onchange = saveTranslateEngine;
 $('set-agy-model').onchange = saveAgyModel;
 $('set-claude-model').onchange = saveClaudeModel;
@@ -1422,7 +1684,14 @@ findInput.addEventListener('keydown', (e) => {
 });
 $('btn-find-next').onclick = () => runFind(false);
 $('btn-find-prev').onclick = () => runFind(true);
-$('pdf-page').onchange = (e) => dualView?.gotoPage(parseInt(e.target.value, 10) || 1);
+const pdfPageInput = $('pdf-page');
+pdfPageInput.addEventListener('input', () => { pdfPageEdited = true; });
+pdfPageInput.addEventListener('change', (e) => {
+  if (!pdfPageEdited) return; // 갱신 버튼 클릭으로 포커스만 잃은 경우는 이동하지 않는다
+  pdfPageEdited = false;
+  dualView?.gotoPage(parseInt(e.target.value, 10) || 1);
+});
+pdfPageInput.addEventListener('blur', () => { pdfPageEdited = false; });
 
 // PDF 모드 단축키: Cmd/Ctrl + '+'/'-' 줌(브라우저 기본 페이지 줌 차단),
 // Cmd/Ctrl + F 검색, Cmd/Ctrl + ←/→ 링크 뒤로·앞으로.
@@ -1535,6 +1804,7 @@ async function openSettings() {
   $('set-agy-refresh-status').textContent = '';
   refreshPdfDefault(); // 비동기 — duti 실행을 기다리느라 설정창이 늦게 뜨지 않게
   $('settings-dialog').showModal();
+  refreshCodexModels(); // 매번 CLI에 직접 요청한다. 모달은 기다리지 않고 먼저 표시한다.
 }
 
 // ===== PDF 기본 앱 =====
@@ -1611,9 +1881,10 @@ window.wcompare.onProjectLoad(async (p) => {
 const MENU = {
   'menu:open-left': () => openByDialog('left'),
   'menu:open-right': () => openByDialog('right'),
+  'menu:reload-files': () => reloadFiles(),
   'menu:close-left': () => closeFile('left'),
   'menu:close-right': () => closeFile('right'),
-  'menu:save': () => save(),
+  'menu:save': () => (mode === 'memo' ? saveAllMemo() : save()).catch(e => setStatus(ipcMessage(e))),
   'menu:project-save': () => saveProject(false),
   'menu:project-save-as': () => saveProject(true),
   'menu:next-diff': () => editorApi.goToDiff('next'),
@@ -1677,3 +1948,5 @@ window.__wc = { editorApi, getMode: () => mode, isMdTocOpen: () => mdTocOpen, is
   // 읽어야 한다 — 화면 위치로는 두 구현(배치 교환 / 내용 교환)을 구별할 수 없다.
   memoValue: (side) => memoView?.getValue(side) ?? null,
   memoMain: () => memoView?.mainSide() ?? null };
+
+initModernUX();

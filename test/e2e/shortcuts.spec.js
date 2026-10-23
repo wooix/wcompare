@@ -127,7 +127,7 @@ test('설정창에 번역 엔진·모델 섹션이 뜨고 값을 바꾸면 저�
   await win.click('#set-tab-translate');
 
   // 기본값이 표시된다
-  await expect(win.locator('#set-translate-engine')).toHaveValue('agy');
+  await expect(win.locator('#set-translate-engine')).toHaveValue('codex');
   await expect(win.locator('#set-agy-model')).toHaveValue('');
   await expect(win.locator('#set-claude-model')).toHaveValue('');
 

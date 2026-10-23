@@ -19,8 +19,8 @@ const { pathDirs } = require('./transpaper.js');
 
 const PDF_UTI = 'com.adobe.pdf';
 
-function findDuti(env = process.env) {
-  for (const dir of pathDirs(env)) {
+function findDuti(env = process.env, extraDirs) {
+  for (const dir of pathDirs(env, extraDirs)) {
     const cand = path.join(dir, 'duti');
     try {
       fs.accessSync(cand, fs.constants.X_OK);
@@ -41,8 +41,8 @@ function parseHandler(stdout) {
  * duti가 없으면 handler를 null로 둔다 — "다른 앱이 기본이다"와 "확인할 수 없다"는 다른 사실이고,
  * 사용자에게도 다르게 말해야 한다.
  */
-function getPdfHandler({ run = execFileSync, env = process.env } = {}) {
-  const bin = findDuti(env);
+function getPdfHandler({ run = execFileSync, env = process.env, extraDirs } = {}) {
+  const bin = findDuti(env, extraDirs);
   if (!bin) return { duti: false, handler: null };
   try {
     return { duti: true, handler: parseHandler(run(bin, ['-x', 'pdf'], { encoding: 'utf8' })) };
@@ -55,18 +55,18 @@ function getPdfHandler({ run = execFileSync, env = process.env } = {}) {
  * PDF 기본 앱을 bundleId로 바꾼다. 'all' 은 뷰어·에디터 역할을 모두 지정한다는 뜻.
  * 실패 사유를 구분해 돌려준다 — 사용자가 다음에 무엇을 해야 할지가 사유마다 다르기 때문.
  */
-function setPdfHandler(bundleId, { run = execFileSync, env = process.env } = {}) {
+function setPdfHandler(bundleId, { run = execFileSync, env = process.env, extraDirs } = {}) {
   if (!/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(String(bundleId || ''))) {
     return { ok: false, reason: 'bad-id' };
   }
-  const bin = findDuti(env);
+  const bin = findDuti(env, extraDirs);
   if (!bin) return { ok: false, reason: 'no-duti' };
   try {
     run(bin, ['-s', bundleId, PDF_UTI, 'all'], { encoding: 'utf8' });
   } catch (e) {
     return { ok: false, reason: 'failed', message: String(e?.message || e).slice(0, 300) };
   }
-  return { ok: true, handler: getPdfHandler({ run, env }).handler };
+  return { ok: true, handler: getPdfHandler({ run, env, extraDirs }).handler };
 }
 
 module.exports = { findDuti, parseHandler, getPdfHandler, setPdfHandler, PDF_UTI };

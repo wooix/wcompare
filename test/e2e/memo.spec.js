@@ -41,7 +41,7 @@ function setup(tag, delaySec = 0) {
 const setStorage = (app, d) => app.evaluate((_e, dir) => {
   const cache = process.mainModule.require('module')._cache;
   const key = Object.keys(cache).find((k) => k.replace(/\\/g, '/').endsWith('/src/main/settings.js'));
-  cache[key].exports.set({ storageDir: dir });
+  cache[key].exports.set({ storageDir: dir, translate: { engine: 'agy' } });
 }, d);
 
 async function launch(s) {
@@ -49,6 +49,7 @@ async function launch(s) {
     args: [MAIN, `--user-data-dir=${s.userData}`],
     env: { ...process.env, WCOMPARE_AGY: s.agy },
   });
+  await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
   const win = await app.firstWindow();
   await win.waitForSelector('#toolbar', { timeout: 20000 });
   // 대형 번들(app.js)은 정적 #toolbar보다 늦게 실행된다 → 배선이 끝날 때까지 기다린다.
@@ -245,4 +246,98 @@ test('번역 취소: 진행 중 버튼을 다시 누르면 멈추고 원래 상�
 
   await app.close();
   fs.rmSync(s.dir, { recursive: true, force: true });
+});
+
+test('경로 없는 초안: 내용으로 번역 활성화, 지우면 비활성화, 저장으로 원문·번역 보존', async () => {
+  const s = setup('draft'); const { app, win } = await launch(s);
+  try {
+    await win.click('#btn-mode-memo');
+    await expect(win.locator('#btn-memo-translate')).toBeDisabled();
+    await win.click('.memo-src .monaco-editor'); await win.keyboard.type('Draft before saving');
+    await expect(win.locator('#btn-memo-translate')).toBeEnabled();
+    await win.keyboard.press('Meta+A'); await win.keyboard.press('Backspace');
+    await expect(win.locator('#btn-memo-translate')).toBeDisabled();
+    await win.keyboard.type('Draft before saving');
+    await win.click('#btn-memo-translate');
+    await expect.poll(() => win.evaluate(() => window.__wc.memoValue('translation'))).toContain('번역된 본문');
+    expect(fs.readFileSync(s.log,'utf8')).toContain('Draft before saving');
+    await expect(win.locator('#btn-memo-save')).toBeEnabled();
+    await win.click('#btn-memo-save');
+    await expect(win.locator('#btn-memo-save')).toBeDisabled();
+    const files = fs.readdirSync(path.join(s.storageDir,'memos'));
+    expect(files.filter(f => f.endsWith('.md'))).toHaveLength(2);
+    expect(files.some(f => fs.readFileSync(path.join(s.storageDir,'memos',f),'utf8') === 'Draft before saving')).toBe(true);
+  } finally { await app.close(); fs.rmSync(s.dir,{recursive:true,force:true}); }
+});
+
+test('File > Close Window (⌘W): 취소하면 유지, 다른 탭에서도 저장 선택 시 초안 저장 후 닫기', async () => {
+  const s = setup('close-save'); const { app, win } = await launch(s);
+  try {
+    // Playwright의 CDP 키 입력은 macOS 네이티브 메뉴 accelerator를 거치지 않는다.
+    // 메뉴의 ⌘W 배정은 pdf-close-settings에서 확인하고, 여기서는 메뉴 액션을 실행한다.
+    const closeFromMenu = () => app.evaluate(({ Menu, BrowserWindow }) => {
+      const file = Menu.getApplicationMenu().items.find(item => item.label === 'File');
+      const close = file.submenu.items.find(item => item.label === 'Close Window');
+      close.click(close, BrowserWindow.getAllWindows()[0]);
+    });
+    await win.click('#btn-mode-memo'); await win.click('.memo-src .monaco-editor'); await win.keyboard.type('Keep this draft');
+    await win.click('#btn-mode-diff');
+    await app.evaluate(({dialog}) => { global.memoPrompts = []; dialog.showMessageBox = async (_w,opts) => { global.memoPrompts.push(opts); return { response: 2 }; }; });
+    await closeFromMenu();
+    await expect.poll(() => app.evaluate(() => global.memoPrompts.length)).toBe(1);
+    expect(win.isClosed()).toBe(false);
+    expect(await win.evaluate(() => window.__wc.memoValue('source'))).toBe('Keep this draft');
+    await app.evaluate(({dialog}) => { dialog.showMessageBox = async () => ({response:0}); });
+    const closed = win.waitForEvent('close');
+    await closeFromMenu();
+    await closed;
+    const files=fs.readdirSync(path.join(s.storageDir,'memos'));
+    expect(files.some(f => fs.readFileSync(path.join(s.storageDir,'memos',f),'utf8') === 'Keep this draft')).toBe(true);
+  } finally { await app.close(); fs.rmSync(s.dir,{recursive:true,force:true}); }
+});
+
+test('다른 메모로 교체: 취소는 내용 보존, 저장 안 함은 새 메모로 이동', async () => {
+  const s=setup('replace'); const {app,win}=await launch(s);
+  try {
+    await win.click('#btn-mode-memo'); await win.click('.memo-src .monaco-editor'); await win.keyboard.type('Unsaved old draft');
+    await app.evaluate(({dialog}) => { dialog.showMessageBox=async()=>({response:2}); });
+    await win.click('#btn-memo-new');
+    expect(await win.evaluate(()=>window.__wc.memoValue('source'))).toBe('Unsaved old draft');
+    await app.evaluate(({dialog}) => { dialog.showMessageBox=async()=>({response:1}); });
+    await win.click('#btn-memo-new');
+    await expect.poll(()=>win.evaluate(()=>window.__wc.memoValue('source'))).toBe('');
+    await expect(win.locator('#btn-memo-translate')).toBeDisabled();
+  } finally {await app.close();fs.rmSync(s.dir,{recursive:true,force:true});}
+});
+
+test('저장 실패 시 창을 닫지 않고 초안을 유지한다', async () => {
+  const s=setup('close-failure'); const {app,win}=await launch(s);
+  try {
+    await win.click('#btn-mode-memo'); await win.click('.memo-src .monaco-editor'); await win.keyboard.type('Do not lose me');
+    await app.evaluate(({dialog,ipcMain}) => {
+      dialog.showMessageBox=async()=>({response:0});
+      ipcMain.removeHandler('file:write'); ipcMain.handle('file:write',()=>{throw new Error('disk unavailable');});
+    });
+    await win.evaluate(() => { window.memoLastError = ''; window.alert = text => { window.memoLastError = text; }; });
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
+    await expect.poll(() => win.evaluate(() => window.memoLastError)).toContain('저장하지 못했습니다');
+    expect(win.isClosed()).toBe(false);
+    expect(await win.evaluate(()=>window.__wc.memoValue('source'))).toBe('Do not lose me');
+    await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1});});
+  } finally {await app.close();fs.rmSync(s.dir,{recursive:true,force:true});}
+});
+
+test('앱 종료도 저장 확인을 거치며 저장 안 함은 종료를 완료한다', async () => {
+  const s=setup('quit'); const {app,win}=await launch(s); let exited = false;
+  try {
+    await win.click('#btn-mode-memo'); await win.click('.memo-src .monaco-editor'); await win.keyboard.type('Discard on quit');
+    await app.evaluate(({dialog})=>{ global.memoPrompts=0;dialog.showMessageBox=async()=>{global.memoPrompts++;return {response:2};};});
+    await app.evaluate(({app})=>app.quit());
+    await expect.poll(()=>app.evaluate(()=>global.memoPrompts)).toBe(1);
+    expect(win.isClosed()).toBe(false);
+    await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1});});
+    const closed=app.waitForEvent('close');
+    await app.evaluate(({app})=>app.quit()); await closed; exited = true;
+    expect(fs.existsSync(path.join(s.storageDir,'memos')) ? fs.readdirSync(path.join(s.storageDir,'memos')).filter(f=>f.endsWith('.md')) : []).toEqual([]);
+  } finally {if(!exited) await app.close();fs.rmSync(s.dir,{recursive:true,force:true});}
 });

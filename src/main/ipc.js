@@ -158,14 +158,31 @@ function registerIpc() {
   ipcMain.handle('file:readBytes', (_e, rawPath) => {
     const p = allowPath(rawPath);
     recentFiles.record(p);
-    const { bytes, byteSize } = readBytes(p);
+    const { bytes, byteSize, sha256 } = readBytes(p);
     // 설정: PDF를 열 때 보관 폴더에 사본 저장 (원본이 외장 드라이브 등에서 사라져도 기록이 남게)
     archivePdfIfEnabled(p);
-    return { path: p, ext: path.basename(p), bytes, byteSize };
+    return { path: p, ext: path.basename(p), bytes, byteSize, sha256 };
+  });
+
+  ipcMain.handle('files:confirm-reload', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning', title: '파일 갱신', message: '저장하지 않은 변경 내용이 있습니다.',
+      detail: '저장 후 갱신하면 편집 내용을 파일에 기록합니다. 저장하지 않고 갱신하면 편집 내용이 사라집니다.',
+      buttons: ['저장 후 갱신', '저장하지 않고 갱신', '취소'],
+      defaultId: 2, cancelId: 2, noLink: true,
+    });
+    return ['save', 'discard', 'cancel'][response] || 'cancel';
   });
 
   // ===== 설정 =====
   ipcMain.handle('settings:get', () => settings.get());
+  // 설정창을 열 때마다 설치된 Codex CLI에 model/list를 직접 요청한다.
+  // 저장된 모델 목록이나 models_cache.json은 드롭다운의 출처로 쓰지 않는다.
+  ipcMain.handle('codex:models', async () => {
+    try { return { ok: true, models: await require('./codexEngine').modelCatalog() }; }
+    catch (e) { return { ok: false, error: e.message || String(e) }; }
+  });
   // 렌더러가 바꿀 수 있는 키는 아래 화이트리스트뿐이다 (storageDir는 빠져 있다 — 보관 폴더는
   // dialog를 거쳐야만 바뀐다. 렌더러가 임의 경로를 설정에 앉히면 그 경로가 곧 쓰기 대상이 된다).
   ipcMain.handle('settings:set', (_e, patch = {}) => {
@@ -176,6 +193,8 @@ function registerIpc() {
     if (patch.shortcuts && typeof patch.shortcuts === 'object') next.shortcuts = patch.shortcuts;
     if (patch.ui && typeof patch.ui === 'object' && !Array.isArray(patch.ui)) next.ui = patch.ui;
     if (patch.translate && typeof patch.translate === 'object' && !Array.isArray(patch.translate)) {
+      if (patch.translate.engine && !['agy', 'claude', 'codex'].includes(patch.translate.engine)) throw new Error('지원하지 않는 번역 엔진입니다.');
+      require('./codexEngine').buildCodexArgs(patch.translate);
       next.translate = patch.translate;
     }
     // 요약 프롬프트 override도 같은 관용구로 통과시킨다. 이 화이트리스트에 키를 더하는 것을
@@ -383,6 +402,16 @@ function registerIpc() {
   // 경로는 전부 여기서 만든다. 렌더러는 '이름'만 넘기고, 실제 경로는 dirFor('memos') 아래로만
   // 만들어져 allowPath로 등록된다 — 그래야 file:read/file:write의 allowlist 검문을 통과할 수 있고,
   // 렌더러가 보낸 문자열이 보관 폴더 밖을 가리킬 방법이 없다.
+  ipcMain.handle('memo:confirm-save', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'question', title: '메모 저장', message: '작성한 메모를 저장할까요?',
+      detail: '저장하지 않은 원문과 번역본을 확인하세요. 진행 중인 번역은 닫을 때 중단됩니다.',
+      buttons: ['저장', '저장 안 함', '취소'], defaultId: 0, cancelId: 2, noLink: true,
+    });
+    return ['save', 'discard', 'cancel'][response] || 'cancel';
+  });
+
   ipcMain.handle('memo:list', () => memoFiles.listMemos(settings.dirFor('memos'))
     .map((m) => ({ ...m, path: allowPath(m.path) })));
 
@@ -405,8 +434,8 @@ function registerIpc() {
   // 있어야 하고, 파일을 다시 읽으면 저장 안 된 편집이 빠진 채 번역된다.
   ipcMain.handle('memo:translate', async (e, { path: rawPath, content } = {}) => {
     const wcId = e.sender.id;
-    const p = normalize(rawPath);
-    if (!allowed.has(p)) throw new Error('memo translate denied: 이 세션에서 연 메모가 아닙니다');
+    const p = rawPath ? normalize(rawPath) : null;
+    if (p && !allowed.has(p)) throw new Error('memo translate denied: 이 세션에서 연 메모가 아닙니다');
     if (memoJobs.has(wcId)) throw new Error('이 창에서 이미 번역이 진행 중입니다');
     const job = translateMemo(content, { translateSettings: settings.get().translate });
     memoJobs.add(wcId, p, job);
@@ -461,7 +490,7 @@ function registerIpc() {
   // load는 조용히 빈 값을 준다(복원은 열기 직후 자동 실행이라 예외로 흐름을 끊지 않는다).
   ipcMain.handle('summary:load', (_e, rawPath) => {
     const p = normalize(rawPath);
-    if (!openedPdfs.has(p)) return { parts: { overview: '', sections: '', flow: '' }, meta: null };
+    if (!openedPdfs.has(p)) return { parts: { overview: '', narrative: '', sections: '', flow: '' }, meta: null };
     return summaryStore.load(settings.dirFor('summaries'), p);
   });
   ipcMain.handle('summary:save', (_e, rawPath, parts, meta) => {

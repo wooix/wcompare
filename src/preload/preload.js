@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('wcompare', {
   openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
   readFile: (path) => ipcRenderer.invoke('file:read', path),
   readBytes: (path) => ipcRenderer.invoke('file:readBytes', path),
+  confirmReload: () => ipcRenderer.invoke('files:confirm-reload'),
   writeFile: (payload) => ipcRenderer.invoke('file:write', payload),
   lint: (payload) => ipcRenderer.invoke('lint:run', payload),
   pdfContextMenu: (flags) => ipcRenderer.invoke('ui:pdf-context-menu', flags),
@@ -53,7 +54,15 @@ contextBridge.exposeInMainWorld('wcompare', {
   // 설정: set으로 넘긴 patch는 main이 키 화이트리스트로 한 번 거른다(보관 폴더는 여기로 못 바꾼다 —
   // pickStorageDir, 즉 main의 dialog를 거쳐야 한다).
   // memo 모드 — 경로는 전부 main이 만든다. 렌더러는 이름과 '이미 연 경로'만 넘긴다.
+  onCloseRequested: (cb) => ipcRenderer.on('window:request-close', () => cb()),
+  finishClose: (confirmed) => ipcRenderer.invoke('window:finish-close', confirmed),
+  focusMode: {
+    get: () => ipcRenderer.invoke('focus-mode:get'),
+    set: (enabled) => ipcRenderer.invoke('focus-mode:set', enabled),
+    onChanged: (cb) => ipcRenderer.on('focus-mode:changed', (_e, state) => cb(state)),
+  },
   memo: {
+    confirmSave: () => ipcRenderer.invoke('memo:confirm-save'),
     list: () => ipcRenderer.invoke('memo:list'),
     create: (name) => ipcRenderer.invoke('memo:new', name),
     translationPath: (srcPath) => ipcRenderer.invoke('memo:translation-path', srcPath),
@@ -79,6 +88,9 @@ contextBridge.exposeInMainWorld('wcompare', {
   models: {
     refresh: () => ipcRenderer.invoke('models:refresh'),
   },
+  codex: {
+    models: () => ipcRenderer.invoke('codex:models'),
+  },
   // PDF 마커 자동 영속화: 경로별 마커 저장/복원. path는 openPdf가 받은 정규화 절대경로.
   markers: {
     save: (path, markers) => ipcRenderer.invoke('markers:save', path, markers),
@@ -96,7 +108,7 @@ contextBridge.exposeInMainWorld('wcompare', {
   onOpenPair: (cb) => ipcRenderer.on('open-pair', (_e, data) => cb(data)),
   onMenu: (cb) => {
     const channels = [
-      'menu:open-left', 'menu:open-right', 'menu:close-left', 'menu:close-right', 'menu:save',
+      'menu:open-left', 'menu:open-right', 'menu:reload-files', 'menu:close-left', 'menu:close-right', 'menu:save',
       'menu:project-save', 'menu:project-save-as',
       'menu:next-diff', 'menu:prev-diff', 'menu:toggle-ws', 'menu:toggle-vim', 'menu:toggle-theme',
       'menu:toggle-night', 'menu:toggle-dict', 'menu:settings',

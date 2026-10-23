@@ -16,7 +16,7 @@
 const path = require('node:path');
 
 const KINDS = ['overview', 'narrative', 'sections', 'flow'];
-const TAB_LABEL = { overview: 'Overview', narrative: '핵심 정리', sections: '절별 요약', flow: '흐름도' };
+const TAB_LABEL = { overview: '핵심 파악', narrative: '작동 원리', sections: '근거 확인', flow: '한눈에 보기' };
 // 파일명 접미사. 한글이어도 macOS 파일시스템엔 안전하지만 공백은 보기 나쁘니 뺀다.
 const TAB_SUFFIX = { overview: 'overview', narrative: '핵심정리', sections: '절별요약', flow: '흐름도' };
 

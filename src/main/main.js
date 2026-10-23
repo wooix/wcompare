@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, screen } = require('electron');
 const path = require('node:path');
 const { registerScheme, handleScheme, APP_ORIGIN } = require('./scheme');
 const {
@@ -9,7 +9,24 @@ const { applyMenu, setHandlers, noteFocus } = require('./menu');
 const project = require('./project');
 const { parsePair } = require('./cli');
 const { windowTitle } = require('./version');
+const { createFocusMode } = require('./focusMode');
 
+let focusMode;
+let quitRequested = false;
+const closeApproved = new WeakSet();
+const closePending = new WeakSet();
+app.on('before-quit', () => { quitRequested = true; });
+ipcMain.handle('window:finish-close', (event, confirmed) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return;
+  closePending.delete(win);
+  if (confirmed !== true) { quitRequested = false; return; }
+  closeApproved.add(win);
+  setImmediate(() => {
+    if (!win || win.isDestroyed()) return;
+    if (quitRequested) app.quit(); else win.close();
+  });
+});
 app.enableSandbox();
 registerScheme();
 
@@ -28,6 +45,17 @@ function createWindow(pair = { left: null, right: null }) {
       sandbox: true, contextIsolation: true, nodeIntegration: false,
       preload: path.join(__dirname, '..', '..', 'dist', 'preload', 'preload.js'),
     },
+  });
+  focusMode.registerWindow(win);
+  let rendererReady = false;
+  win.webContents.on('did-finish-load', () => { rendererReady = true; });
+  win.webContents.on('render-process-gone', () => { rendererReady = false; });
+  win.on('close', event => {
+    if (!rendererReady || closeApproved.has(win)) return;
+    event.preventDefault();
+    if (closePending.has(win)) return;
+    closePending.add(win);
+    win.webContents.send('window:request-close');
   });
   win.loadURL(APP_ORIGIN + 'index.html');
   // 핀치/비주얼 줌 잠금 — 렌더러의 Ctrl+휠/단축키 PDF 줌과 충돌하는 페이지 전체 줌 방지.
@@ -54,7 +82,7 @@ let flushTimer = null;
 function routeOpenFiles(files) {
   const paths = files.map((f) => allowPath(f)); // 경로를 허용목록에 등록하는 주체는 언제나 main
   files.forEach((f) => require('./recentFiles').record(f));
-  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  const win = BrowserWindow.getFocusedWindow() || focusMode.documentWindows()[0];
   if (!win) { createWindow({ left: paths[0] || null, right: paths[1] || null }); return; }
   // 어느 pane이 비었는지는 렌더러만 안다. 자리 배치는 렌더러에 맡기고, 자리가 없으면
   // 렌더러가 window:open-files로 되물어 새 창을 받는다.
@@ -84,6 +112,7 @@ app.on('web-contents-created', (_e, contents) => {
 
 app.whenReady().then(() => {
   const firstPair = parsePair(process.argv, app.isPackaged);
+  focusMode = createFocusMode({ app, BrowserWindow, screen, ipcMain });
   handleScheme();
   registerIpc();
   project.setOnChange(applyMenu); // 최근 목록이 바뀌면 메뉴를 다시 세팅
@@ -99,9 +128,8 @@ app.whenReady().then(() => {
   createWindow(firstPair);
   // 파일 더블클릭으로 앱이 처음 뜬 경우, open-file은 이미 도착해 큐에 쌓여 있다.
   flushPendingFiles();
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  app.on('activate', () => { if (focusMode.documentWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 // 번역 중 종료해도 transpaper/agy가 백그라운드에 남지 않게 프로세스 그룹째 정리한다.
 app.on('will-quit', () => cancelTranslation());
-

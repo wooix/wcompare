@@ -30,12 +30,14 @@ const DEFAULTS = {
     // 폭이 달라지면 같은 문장이 좌우에서 다른 지점에서 접힌다.
     paneEqualWidth: true,
   },
-  // 번역 AI 모델 선택. engine은 transpaper --engine에 그대로 전달(agy|claude).
+  // 번역 AI 모델 선택. engine은 agy/claude/codex 중 선택한다.
+  // Codex 모델 목록은 설정을 열 때마다 CLI model/list로 조회하며 설정 파일에 보관하지 않는다.
   // agyModel/claudeModel이 빈 문자열이면 엔진 기본값을 쓴다(플래그 생략).
   // agyModels는 "목록 새로고침"(agy models)으로 채워지고, claudeModels는 자주 쓰는 값으로 미리 채운다.
-  // 둘 다 사용자가 목록에 없는 모델명을 입력하면 자동으로 추가된다(settingsStore의 문자열 배열 지원).
   translate: {
-    engine: 'agy',
+    engine: 'codex',
+    codexModel: 'gpt-6-astra',
+    codexEffort: 'low',
     agyModel: '',
     claudeModel: '',
     agyModels: [],
@@ -59,8 +61,13 @@ let store = null;
 // app.getPath('userData')는 앱 준비 후에만 유효하므로 최초 사용 시점에 만든다(lazy).
 const inst = () => (store ||= createSettingsStore(path.join(app.getPath('userData'), 'settings.json'), DEFAULTS));
 
-const get = () => inst().get();
-const set = (patch) => inst().set(patch);
+const get = () => {
+  const value = inst().get();
+  if (value.translate.codexModel === 'astra-light') { value.translate.codexModel = 'gpt-6-astra'; value.translate.codexEffort = 'low'; }
+  if (!value.translate.codexModel) value.translate.codexModel = 'gpt-6-astra';
+  return value;
+};
+const set = (patch) => { inst().set(patch); return get(); };
 
 // 보관 폴더 하위의 종류별 디렉터리를 보장하고 그 경로를 돌려준다.
 // downloads: URL로 받은 PDF를 두는 곳 — 원본이 로컬에 없으므로 여기 파일이 곧 원본이다.

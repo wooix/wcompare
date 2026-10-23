@@ -67,6 +67,11 @@ test('isReserved: 예약된 표현이면 라벨, 아니면 null', () => {
   assert.equal(isReserved('Cmd+F'), '찾기');
   assert.equal(isReserved('Cmd+ArrowRight'), '앞으로');
   assert.equal(isReserved('Cmd+Comma'), '설정');
+  assert.equal(isReserved('Cmd+R'), '파일 갱신');
+  assert.equal(isReserved('Cmd+W'), '창 닫기');
+  assert.equal(isReserved('Cmd+Alt+W'), '닫기 왼쪽');
+  assert.equal(isReserved('Cmd+Alt+Shift+W'), '닫기 오른쪽');
+  assert.equal(isReserved('Cmd+Shift+W'), null);
   assert.equal(isReserved('Alt+F'), null); // 기본 fit 단축키는 예약이 아니다
   assert.equal(isReserved('Cmd+D'), null); // 기본 dict 단축키도 예약이 아니다
   assert.equal(isReserved(''), null);

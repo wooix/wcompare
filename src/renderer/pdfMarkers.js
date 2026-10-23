@@ -61,23 +61,69 @@ export function createMarkerLayer(viewer, store) {
     return layer;
   }
 
+  // Range.getClientRects()는 PDF 글자보다 큰 브라우저 선택 line box를 돌려준다.
+  // 저장된 좌표는 유지하고 표시할 때 같은 줄의 textLayer span 높이로 맞춘다.
+  // 따라서 예전에 저장한 마커도 다시 생성하지 않아도 올바른 높이로 보인다.
+  function textGeometry(page) {
+    const tl = viewer.textLayerOf(page);
+    const bounds = tl?.getBoundingClientRect();
+    if (!bounds?.width || !bounds.height) return null;
+    const spans = [...tl.querySelectorAll('span[role="presentation"]')]
+      .filter(span => span.textContent?.trim())
+      .map(span => span.getBoundingClientRect())
+      .filter(rect => rect.width > 0 && rect.height > 0);
+    return { bounds, spans };
+  }
+
+  function visualRect(r, geometry) {
+    // textLayer가 아직 만들어지지 않은 페이지는 임시로 line box의 여백을 줄인다.
+    // textlayerrendered 이벤트에서 정확한 span 경계로 다시 그린다.
+    const fallback = { ...r, y: r.y + r.h * 0.09, h: r.h * 0.84 };
+    if (!geometry?.spans.length) return fallback;
+    const { bounds, spans } = geometry;
+    const left = bounds.left + r.x * bounds.width;
+    const right = left + r.w * bounds.width;
+    const center = bounds.top + (r.y + r.h / 2) * bounds.height;
+    const nearby = spans.filter(s => Math.min(s.right, right) - Math.max(s.left, left) > 0.5);
+    if (!nearby.length) return fallback;
+    const anchor = nearby.reduce((best, s) =>
+      Math.abs((s.top + s.bottom) / 2 - center) < Math.abs((best.top + best.bottom) / 2 - center) ? s : best);
+    if (Math.abs((anchor.top + anchor.bottom) / 2 - center) > Math.max(anchor.height, r.h * bounds.height) * 0.55) return fallback;
+    const anchorCenter = (anchor.top + anchor.bottom) / 2;
+    const row = nearby.filter(s => Math.abs((s.top + s.bottom) / 2 - anchorCenter) <= Math.max(s.height, anchor.height) * 0.35);
+    const top = Math.min(...row.map(s => s.top));
+    const bottom = Math.max(...row.map(s => s.bottom));
+    const y = Math.max(0, (top - bounds.top) / bounds.height);
+    const end = Math.min(1, (bottom - bounds.top) / bounds.height);
+    return { ...r, y, h: Math.max(0, end - y) };
+  }
+
   function renderPage(page) {
     const layer = layerOf(page);
     if (!layer) return;
     layer.replaceChildren();
+    const geometry = textGeometry(page);
     for (const m of list()) {
       if (m.page !== page) continue;
       for (const r of m.rects) {
+        const shown = visualRect(r, geometry);
         const el = document.createElement('div');
         el.className = `wc-mark wc-mark-${m.kind}`;
         el.dataset.id = m.id;
 
         el.style.left = `${r.x * 100}%`;
-        el.style.top = `${r.y * 100}%`;
         el.style.width = `${r.w * 100}%`;
-        el.style.height = `${r.h * 100}%`;
-        if (m.kind === 'highlight') el.style.background = m.color;
-        else el.style.color = m.color; // box-shadow: inset 0 -2px 0 currentColor
+        if (m.kind === 'highlight') {
+          el.style.top = `${shown.y * 100}%`;
+          el.style.height = `calc(${shown.h * 100}% + 0.5px)`;
+          el.style.background = m.color;
+        } else {
+          // 선의 윗변이 글자 상자의 아랫변에 닿게 둔다. 1.5px 선 전체가
+          // 글자의 실제 잉크 아래 약 1~2px 안에 놓인다.
+          el.style.top = `${(shown.y + shown.h) * 100}%`;
+          el.style.height = '0';
+          el.style.color = m.color;
+        }
         layer.appendChild(el);
       }
     }
@@ -89,6 +135,7 @@ export function createMarkerLayer(viewer, store) {
   }
 
   viewer.onPageRendered((p) => renderPage(p));
+  viewer.onTextLayerRendered((p) => renderPage(p));
   viewer.onPagesInit(() => renderAll());
 
   // 화면 좌표 → 페이지 번호 + 페이지 내 0~1 좌표. 렌더된 페이지만 대상.
@@ -166,10 +213,14 @@ export function createMarkerLayer(viewer, store) {
     if (!at) return null;
     // 나중에 찍은 마커가 위에 있으므로 뒤에서부터 찾는다
     const arr = list();
+    const geometry = textGeometry(at.page);
     for (let i = arr.length - 1; i >= 0; i--) {
       const m = arr[i];
       if (m.page !== at.page) continue;
-      if (m.rects.some((r) => at.x >= r.x && at.x <= r.x + r.w && at.y >= r.y && at.y <= r.y + r.h)) return m.id;
+      if (m.rects.some((r) => {
+        const shown = visualRect(r, geometry);
+        return at.x >= r.x && at.x <= r.x + r.w && at.y >= shown.y && at.y <= shown.y + shown.h;
+      })) return m.id;
     }
     return null;
   }

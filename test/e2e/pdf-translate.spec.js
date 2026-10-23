@@ -12,6 +12,8 @@ const MAIN = path.join(__dirname, '..', '..', 'src', 'main', 'main.js');
 // spec 사이로 새지 않도록 userData를 이 파일 전용 임시 폴더로 격리한다. 공유 프로필을 쓰면
 // 요약 패널이 열린 채로 시작해 pane 폭이 달라지고, 배율·스크롤을 재는 테스트가 실행 순서에 따라 흔들린다.
 const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ud-'));
+// The fixture invokes an agy-style transpaper stub, independent of the app default.
+fs.writeFileSync(path.join(USER_DATA, 'settings.json'), JSON.stringify({ translate: { engine: 'agy' }, storageDir: path.join(USER_DATA, 'storage') }));
 const leftC = '.pdf-pane[data-side=left] .pdf-container';
 const rightC = '.pdf-pane[data-side=right] .pdf-container';
 
@@ -114,4 +116,21 @@ test('번역하면 결과가 반대편 pane에 열린다', async () => {
 
   await app.close();
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('Codex direct PDF: no transpaper, model gpt-6-astra, generated PDF opens on the right',async()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wc-codex-direct-ui-'));
+ const src=path.join(dir,'paper.pdf'),profile=path.join(dir,'profile'),bin=path.join(dir,'codex');
+ fs.mkdirSync(profile);fs.writeFileSync(src,makePdf(2));
+ fs.writeFileSync(path.join(profile,'settings.json'),JSON.stringify({translate:{engine:'codex'},storageDir:path.join(dir,'storage')}));
+ fs.writeFileSync(bin,`#!${process.execPath}\nlet text='';process.stdin.on('data',d=>text+=d);process.stdin.on('end',()=>{require('fs').writeFileSync(process.env.LOG,JSON.stringify({args:process.argv.slice(2),text}));setTimeout(()=>require('fs').writeFileSync('translated.pdf',Buffer.from(process.env.RESULT,'base64')),800);});`,{mode:0o755});
+ const app=await electron.launch({args:[MAIN,'--user-data-dir='+profile,src],env:{...process.env,WCOMPARE_CODEX:bin,WCOMPARE_TRANSPAPER:'/missing/transpaper',LOG:path.join(dir,'log'),RESULT:makePdf(2,{lines:2}).toString('base64')}});
+ try{
+ const win=await app.firstWindow();await win.waitForSelector(`${leftC} canvas`);
+ await win.click('#btn-translate');
+ await expect(win.locator('.pdf-pane[data-side=right] .pdf-busy')).toContainText('PDF 전체');
+ await win.waitForSelector(`${rightC} canvas`,{timeout:15000});
+ const log=JSON.parse(fs.readFileSync(path.join(dir,'log')));expect(log.args).toContain('gpt-6-astra');expect(log.text).toContain('원본과 동일한 형태');
+ expect(fs.existsSync(path.join(dir,'paper.ko.pdf'))).toBe(true);
+ }finally{await app.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

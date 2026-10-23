@@ -52,6 +52,37 @@ test('드래그 선택 후 형광펜/밑줄 마커가 생긴다', async () => {
   await mark(win, 'underline');
   await expect(win.locator(`${L} .wc-mark-underline`)).toHaveCount(1);
 
+  // 실제 PDF 캔버스의 마지막 잉크 픽셀을 기준으로 위치를 잰다. 브라우저의
+  // Range line box는 글자보다 크므로 그 경계를 기준으로 검사하면 회귀를 놓친다.
+  const gap = await win.evaluate((pane) => {
+    const span = document.querySelector(`${pane} .textLayer span`);
+    const selected = span.getBoundingClientRect();
+    const canvas = document.querySelector(`${pane} .pdfViewer .page canvas`);
+    const canvasBox = canvas.getBoundingClientRect();
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const px = (x) => Math.round((x - canvasBox.left) * canvas.width / canvasBox.width);
+    const py = (y) => Math.round((y - canvasBox.top) * canvas.height / canvasBox.height);
+    const x1 = Math.max(0, px(selected.left + 2));
+    const x2 = Math.min(canvas.width, px(selected.right - 2));
+    const y1 = Math.max(0, py(selected.top - 3));
+    const y2 = Math.min(canvas.height, py(selected.bottom + 3));
+    const img = ctx.getImageData(x1, y1, x2 - x1, y2 - y1);
+    let lastInk = -1;
+    for (let y = 0; y < img.height; y++) for (let x = 0; x < img.width; x++) {
+      const i = (y * img.width + x) * 4;
+      if (img.data[i] < 100 && img.data[i + 1] < 100 && img.data[i + 2] < 100) lastInk = y;
+    }
+    const inkBottom = canvasBox.top + (y1 + lastInk + 1) * canvasBox.height / canvas.height;
+    const highlight = document.querySelector(`${pane} .wc-mark-highlight`).getBoundingClientRect();
+    const underline = document.querySelector(`${pane} .wc-mark-underline`).getBoundingClientRect();
+    return { highlight: highlight.bottom - inkBottom, underline: underline.top - inkBottom, height: highlight.height };
+  }, L);
+  expect(gap.highlight).toBeGreaterThanOrEqual(0.5);
+  expect(gap.highlight).toBeLessThanOrEqual(2.5);
+  expect(gap.underline).toBeGreaterThanOrEqual(0.5);
+  expect(gap.underline).toBeLessThanOrEqual(2.5);
+  expect(gap.height).toBeLessThan(60); // 원래 28pt 제목의 선택 line box는 약 65px
+
   // 반대편에는 생기지 않는다
   await expect(win.locator(`${R} .wc-mark`)).toHaveCount(0);
 
@@ -63,7 +94,7 @@ test('여러 줄 선택: 줄당 사각형 하나로 합쳐 겹치지 않는다',
   // getClientRects()는 한 줄마다 거의 같은 사각형을 2개씩 준다 → 그대로 그리면
   // 형광펜이 진해지고 밑줄이 굵어진다. 저장 전에 줄당 하나로 합쳐야 한다.
   const a = path.join(os.tmpdir(), `wc-mk-ml-${Date.now()}.pdf`);
-  fs.writeFileSync(a, makePdf(1, { height: 900, lines: 6 })); // 여러 줄 본문
+  fs.writeFileSync(a, makePdf(1, { height: 900, lines: 6, lineStep: 16 })); // 선택 line box보다 촘촘한 행간
   const app = await electron.launch({ args: [MAIN, `--user-data-dir=${USER_DATA}`, a] });
   const win = await app.firstWindow();
   await win.waitForSelector(`${L} .textLayer span`, { timeout: 20000 });

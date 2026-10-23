@@ -21,7 +21,7 @@ function noteFocus(win) { lastFocusedId = win?.webContents?.id ?? null; }
 function menuWindow() {
   const f = focused();
   if (f) return f;
-  const all = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
+  const all = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && !w._wcompareFocusOverlay);
   const last = all.find((w) => w.webContents.id === lastFocusedId);
   return last || (all.length === 1 ? all[0] : null);
 }
@@ -88,8 +88,11 @@ function build() {
       { label: 'Open Left…', accelerator: 'CmdOrCtrl+O', click: () => send('menu:open-left') },
       { label: 'Open Right…', accelerator: 'CmdOrCtrl+Shift+O', click: () => send('menu:open-right') },
       { label: 'Recent Files', submenu: recentFilesSubmenu() },
-      { label: 'Close Left', accelerator: 'CmdOrCtrl+W', click: () => send('menu:close-left') },
-      { label: 'Close Right', accelerator: 'CmdOrCtrl+Shift+W', click: () => send('menu:close-right') },
+      { label: 'Reload Files', accelerator: 'CmdOrCtrl+R', click: (_item, win) => (win || focused())?.webContents.send('menu:reload-files') },
+      // ⌘W는 macOS의 창 닫기 표준 단축키다. win.close()는 main.js의 미저장 메모 확인을 거친다.
+      { label: 'Close Window', accelerator: 'CmdOrCtrl+W', click: (_item, win) => (win || focused())?.close() },
+      { label: 'Close Left', accelerator: 'CmdOrCtrl+Alt+W', click: () => send('menu:close-left') },
+      { label: 'Close Right', accelerator: 'CmdOrCtrl+Alt+Shift+W', click: () => send('menu:close-right') },
       { label: 'Save', accelerator: 'CmdOrCtrl+S', click: () => send('menu:save') },
       { type: 'separator' },
       { label: 'Open Project…', accelerator: 'CmdOrCtrl+Shift+P', click: () => { project.open(focused()).catch(() => {}); } },

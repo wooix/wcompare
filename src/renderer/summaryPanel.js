@@ -1,8 +1,9 @@
-// src/renderer/summaryPanel.js — 논문 요약 패널(Overview / 핵심 정리 / 절별 요약 / 흐름도 4탭).
+// src/renderer/summaryPanel.js — 핵심 파악 / 작동 원리 / 근거 확인 / 한눈에 보기.
 //
 // 상태는 전부 클로저에 두고 밖으로는 함수만 노출한다(pdfDualView의 createBusy/createUrlPanel 관용구).
 // 요약을 "만드는" 일은 콜백(onGenerate/onRegenerate)에 통째로 위임하고, 이 모듈은 표시와
 // 오류 안내만 맡는다 — 덕분에 LLM 호출 경로가 바뀌어도 여기는 손댈 필요가 없다.
+import { citationPage, READING_VERSION } from '../shared/readingSource.js';
 import { renderMarkdown } from './markdownView.js';
 import { renderMermaid, setMermaidTheme } from './mermaidLoader.js';
 import { createSummaryToc } from './summaryToc.js';
@@ -11,10 +12,10 @@ import { createSummaryToc } from './summaryToc.js';
 // '핵심 정리'는 절 구조가 아니라 논리 흐름(문제→한계→아이디어→동작→검증→결과→남은 것)을 따른다 —
 // 이름을 '흐름 요약'으로 하지 않은 이유는 옆의 '흐름도'와 한 글자 차이라 매번 헷갈리기 때문이다.
 const TABS = [
-  { kind: 'overview', label: 'Overview' },
-  { kind: 'narrative', label: '핵심 정리' },
-  { kind: 'sections', label: '절별 요약' },
-  { kind: 'flow', label: '흐름도' },
+  { kind: 'overview', label: '핵심 파악' },
+  { kind: 'narrative', label: '작동 원리' },
+  { kind: 'sections', label: '근거 확인' },
+  { kind: 'flow', label: '한눈에 보기' },
 ];
 
 // LLM이 돌려준 문자열은 신뢰할 수 없다 → 상한을 둬서 렌더가 통째로 멎는 것을 막는다.
@@ -71,20 +72,31 @@ function createBusy(rootEl) {
   };
 }
 
-export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, onSave } = {}) {
+export function createSummaryPanel(hostEl, { onGenerate, onGenerateAll, onSourcePage, onRegenerate, onCopy, onSave } = {}) {
   const el = document.createElement('div');
   el.className = 'pdf-summary';
 
   // ===== 탭바 =====
   const tabbar = document.createElement('div');
   tabbar.className = 'sum-tabs';
+  tabbar.setAttribute('role', 'tablist');
+  tabbar.setAttribute('aria-label', '논문 읽기 단계');
   const tabBtns = {};
   for (const t of TABS) {
     const b = document.createElement('button');
     b.className = 'sum-tab';
     b.dataset.kind = t.kind;
+    b.id = `reading-tab-${t.kind}`;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-controls', `reading-pane-${t.kind}`);
     b.textContent = t.label;
     b.addEventListener('click', () => setTab(t.kind));
+    b.addEventListener('keydown', (event) => {
+      const i = TABS.findIndex(item => item.kind === t.kind);
+      const next = event.key === 'ArrowRight' ? (i + 1) % TABS.length : event.key === 'ArrowLeft' ? (i + TABS.length - 1) % TABS.length : event.key === 'Home' ? 0 : event.key === 'End' ? TABS.length - 1 : null;
+      if (next === null) return;
+      event.preventDefault(); setTab(TABS[next].kind); tabBtns[TABS[next].kind].focus();
+    });
     tabbar.appendChild(b);
     tabBtns[t.kind] = b;
   }
@@ -148,6 +160,9 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, o
     const p = document.createElement('div');
     p.className = 'sum-pane';
     p.dataset.kind = t.kind;
+    p.id = `reading-pane-${t.kind}`;
+    p.setAttribute('role', 'tabpanel');
+    p.setAttribute('aria-labelledby', `reading-tab-${t.kind}`);
     body.appendChild(p);
     panes[t.kind] = p;
   }
@@ -175,16 +190,39 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, o
   empty.className = 'sum-empty';
   const emptyTitle = document.createElement('div');
   emptyTitle.className = 'sum-empty-title';
-  emptyTitle.textContent = '논문 요약';
+  emptyTitle.textContent = '처음 읽는 논문, 핵심부터';
   const go = document.createElement('button');
   go.className = 'sum-empty-go';
-  go.textContent = '논문 요약 생성';
+  go.textContent = '핵심 파악 시작';
   const emptyHint = document.createElement('div');
   emptyHint.className = 'sum-empty-hint';
-  emptyHint.textContent = '원문 전체를 읽어 개요·핵심 정리·절별 요약·흐름도를 만듭니다 (문서가 길면 시간이 걸립니다)';
-  empty.append(emptyTitle, go, emptyHint);
+  emptyHint.textContent = '짧은 핵심 안내를 먼저 읽고, 필요한 설명만 추가하세요.';
+  const all = document.createElement('button');
+  all.className = 'sum-all'; all.textContent = '전체 만들기';
+  all.title = '네 탭을 순서대로 생성합니다. 시간이 더 걸립니다.';
+  empty.append(emptyTitle, go, emptyHint, all);
+  const guide = document.createElement('div'); guide.className = 'sum-guide';
+  const descriptions = {
+    overview: '핵심 → 원리 → 원문 확인. p.N은 AI가 제안한 PDF 근거 페이지입니다.',
+    narrative: 'p.N을 눌러 원문 근거를 확인하세요. 필수 개념과 작은 예시로 원리를 이해하고, 답을 보기 전에 직접 설명해 보세요.',
+    sections: '절별 주장을 원문에서 확인하세요. p.N은 PDF 실제 페이지이며 AI가 제안한 근거 위치입니다.',
+    flow: '입력에서 출력까지, 이 논문의 핵심 처리 과정을 따라가세요.',
+  };
+  const notice = document.createElement('div'); notice.className = 'sum-version-note';
+  let versions = {};
+  let sourceTruncated = false;
+  body.addEventListener('click', async (event) => {
+    const token = runToken;
+    const link = event.target.closest?.('a');
+    const href = link?.getAttribute('href') || '';
+    if (!href.startsWith('#paper-page-')) return;
+    event.preventDefault(); event.stopPropagation();
+    const page = citationPage(href);
+    const opened = page && await onSourcePage?.(page);
+    if (token === runToken) setError(opened ? '' : '이 근거 페이지를 열 수 없습니다. 원문 페이지 범위를 확인하세요.');
+  });
 
-  el.append(tabbar, acts, content, err, empty);
+  el.append(tabbar, acts, guide, notice, empty, content, err);
   const setBusy = createBusy(el); // 빈 상태까지 덮도록 마지막에 붙인다
   hostEl.appendChild(el);
 
@@ -218,11 +256,11 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, o
   // 먼저 끝날 수 있다 → 완료 시점에 "내가 아직 최신 요청인가"를 확인해 낡은 결과를 버린다.
   // 내용이 바뀌는 곳(setPart/reset)에서도 올려 준다 — 그래야 이미 날아간 렌더가 새 화면을 덮지 않는다.
   let flowToken = 0;
-  const filled = { overview: false, sections: false, flow: false };
+  const filled = { overview: false, narrative: false, sections: false, flow: false };
   // 내보내기(복사/저장)가 넘길 원문. **화면에 실제로 들어간 값**을 담는다 — 상한(MAX_TEXT/MAX_FLOW)에
   // 걸려 잘렸다면 잘린 쪽을 담는다. "내보낸 것 = 보고 있는 것"이 어긋나면 어느 쪽이 진짜인지
   // 확인할 방법이 없다.
-  const rawParts = { overview: '', sections: '', flow: '' };
+  const rawParts = { overview: '', narrative: '', sections: '', flow: '' };
   let pending = false; // 생성/재생성 중복 실행 방지 (버튼 연타)
   let runToken = 0;    // 생성 실행의 세대. reset이 올 때마다 올려 낡은 실행의 뒷정리를 무시한다.
 
@@ -232,8 +270,14 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, o
   // CSS가 아니라 여기서 display를 세우므로(.sum-acts에는 display 선언이 없다) 'flex'를 직접 쓴다.
   function syncEmpty() {
     const has = hasContent();
-    empty.style.display = has ? 'none' : 'flex';
+    empty.style.display = filled[tab] ? 'none' : 'flex';
+    emptyTitle.textContent = has ? `${TABS.find(t => t.kind === tab).label} — 필요할 때 만들기` : '처음 읽는 논문, 핵심부터';
+    go.textContent = `${TABS.find(t => t.kind === tab).label} 시작`;
+    guide.textContent = descriptions[tab] + (sourceTruncated ? ' 긴 문서는 일부 발췌로 분석했습니다. 누락된 근거는 원문에서 확인하세요.' : '');
+    notice.textContent = filled[tab] && versions[tab] !== READING_VERSION ? '이전 형식의 저장된 요약입니다. 새 읽기 안내는 이 탭 다시 생성으로 적용하세요.' : '';
+    el.classList.toggle('has-summary', has);
     acts.style.display = has ? 'flex' : 'none';
+    content.style.display = filled[tab] ? '' : 'none';
   }
 
   function setError(msg) {
@@ -292,9 +336,12 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, o
     for (const t of TABS) {
       const on = t.kind === kind;
       tabBtns[t.kind].classList.toggle('on', on);
+      tabBtns[t.kind].setAttribute('aria-selected', String(on));
+      tabBtns[t.kind].tabIndex = on ? 0 : -1;
       panes[t.kind].classList.toggle('on', on);
     }
     if (kind === 'flow') drawFlow();
+    syncEmpty();
     toc.setVisible(kind === 'sections'); // 목차는 절별 요약 탭 전용 — 다른 탭에서는 폭만 잡아먹는다
   }
 
@@ -316,6 +363,8 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, o
     } else if (panes[kind]) {
       const t = s.length > MAX_TEXT ? `${s.slice(0, MAX_TEXT)}\n\n…(이하 생략)` : s;
       renderMarkdown(panes[kind], t);
+      for (const detail of panes[kind].querySelectorAll('details')) detail.removeAttribute('open');
+      for (const link of panes[kind].querySelectorAll('a[href^="#paper-page-"]')) { link.removeAttribute('target'); link.title = 'AI가 제안한 근거 페이지를 원문에서 확인'; }
       filled[kind] = !!t;
       rawParts[kind] = t;
       // 목차는 반드시 "잘린 뒤의 t"로 그린다 — 그래야 ord(몇 번째 헤딩인가)가 렌더된 DOM과 맞는다.
@@ -334,6 +383,8 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, o
     flowDrawn = '';
     flowToken++; // 진행 중이던 렌더의 결과가 방금 비운 pane에 늦게 들어오지 않게 한다
     for (const k of Object.keys(filled)) filled[k] = false;
+    versions = {};
+    sourceTruncated = false;
     setError('');
     setBusy(null);
     setTab('overview');
@@ -352,7 +403,7 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, o
   // 복사/저장까지 함께 잠그는 이유: 생성 중에는 parts가 탭마다 순서대로 채워지는 중이라,
   // 그때 내보내면 "절반만 든 요약"이 파일로 남는다.
   function setLocked(v) {
-    go.disabled = regen.disabled = copyBtn.disabled = saveBtn.disabled = v;
+    all.disabled = go.disabled = regen.disabled = copyBtn.disabled = saveBtn.disabled = v;
   }
 
   // 생성/재생성 공통. 콜백이 던진 오류는 패널이 직접 보여준다 — 호출측이 try/catch를 반복하지 않게.
@@ -378,6 +429,7 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, o
     }
   }
   go.addEventListener('click', () => run(onGenerate));
+  all.addEventListener('click', () => run(onGenerateAll));
   regen.addEventListener('click', () => run(onRegenerate));
   copyBtn.addEventListener('click', async () => { const n = await run(onCopy); if (n) flash(copyBtn, n); });
   saveBtn.addEventListener('click', async () => { const n = await run(onSave); if (n) flash(saveBtn, n); });
@@ -397,6 +449,8 @@ export function createSummaryPanel(hostEl, { onGenerate, onRegenerate, onCopy, o
   return {
     el,
     setPart,
+    setSourceTruncated: (value) => { sourceTruncated = !!value; syncEmpty(); },
+    setVersions: (value) => { versions = { ...value }; syncEmpty(); },
     setBusy,
     setError,
     setTab,
