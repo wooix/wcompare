@@ -34,6 +34,7 @@ body #toolbar #pdf-controls[style*="contents"] { display:flex !important; }
 body #toolbar .tb-break { display:none; }
 body #pdf-layout { margin:0 10px; border:1px solid var(--border-soft); border-radius:9px; }
 body #pdf-find { width:145px !important; }
+body #pdf-find-scope { min-height:32px; padding:0 8px; border:1px solid var(--border-soft); border-radius:8px; background:var(--bg-input); color:var(--fg); }
 body #pdf-find-count { min-width:0; }
 body #toolbar-status { flex:1 1 180px; white-space:normal; overflow-wrap:anywhere; }
 body #pdf-status, body #memo-status, body #statusbars { padding:7px 20px; box-sizing:border-box; min-height:30px; height:auto; border-top:1px solid var(--border-soft); font:11px -apple-system,sans-serif; color:var(--fg-subtle); }

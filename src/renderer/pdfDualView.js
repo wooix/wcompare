@@ -257,27 +257,47 @@ export function createDualView(hostEl) {
   }
 
   // ===== 문자열 검색 =====
-  // 양쪽 pane에서 동시에 찾는다. 원문/번역본은 텍스트가 달라 한쪽만 걸리는 게 정상이다.
+  // 전체/좌측/우측 중 현재 선택한 pane에만 질의를 전달한다.
   let findQuery = '';
+  let findScope = 'all';
   const findCounts = { left: null, right: null }; // null = 문서 없음
   const findCbs = [];
-  const emitFind = () => findCbs.forEach((cb) => cb({ query: findQuery, ...findCounts }));
-  for (const side of SIDES) viewers[side].onFind((c) => { findCounts[side] = c; emitFind(); });
+  const emitFind = () => findCbs.forEach((cb) => cb({ query: findQuery, scope: findScope, ...findCounts }));
+  for (const side of SIDES) viewers[side].onFind((c) => {
+    if (!findQuery || !loaded[side] || (findScope !== 'all' && findScope !== side)) return;
+    findCounts[side] = c;
+    emitFind();
+  });
 
-  function find(query, { prev = false } = {}) {
+  function find(query, { prev = false, scope = findScope } = {}) {
     const q = query || '';
+    const nextScope = ['all', ...SIDES].includes(scope) ? scope : 'all';
     if (!q) {
       findQuery = '';
+      findScope = nextScope;
       findCounts.left = findCounts.right = null;
       for (const side of SIDES) viewers[side].findClose();
       emitFind();
       return;
     }
-    const again = q === findQuery; // 같은 질의 → 다음/이전 일치로만 이동
+    const sameQuery = q === findQuery;
+    const scopeChanged = nextScope !== findScope;
+    const previousScope = findScope;
     findQuery = q;
+    findScope = nextScope;
     for (const side of SIDES) {
-      if (loaded[side]) viewers[side].find(q, { again, findPrevious: prev });
-      else findCounts[side] = null;
+      if (!loaded[side] || (findScope !== 'all' && findScope !== side)) {
+        findCounts[side] = null;
+        viewers[side].findClose();
+      } else {
+        const wasActive = previousScope === 'all' || previousScope === side;
+        // 전체→한쪽처럼 이미 검색 중인 pane은 그대로 둔다. 새 검색을 걸면
+        // pdf.js의 지연 타이머 때문에 바로 누른 '다음'이 첫 결과로 되돌아간다.
+        if (sameQuery && scopeChanged && wasActive) continue;
+        const again = sameQuery && !scopeChanged;
+        if (!again) findCounts[side] = null;
+        viewers[side].find(q, { again, immediate: scopeChanged, findPrevious: prev });
+      }
     }
     emitFind();
   }
@@ -519,7 +539,7 @@ export function createDualView(hostEl) {
     if (!findQuery) return;
     const q = findQuery;
     findQuery = '';
-    find(q);
+    find(q, { scope: findScope });
   }
 
   // ===== 마커 (형광펜/밑줄) =====

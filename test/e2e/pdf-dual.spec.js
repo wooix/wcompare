@@ -287,6 +287,51 @@ test('검색: 양쪽에서 동시에 찾고 일치 수를 보여준다', async (
   fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
 });
 
+test('검색 범위: 전체·좌측·우측에 따라 강조와 이전/다음 이동을 제한한다', async () => {
+  const { a, b } = writePair('find-scope' + Date.now());
+  const app = await launchApp(a, b);
+  try {
+    const win = await app.firstWindow();
+    await win.waitForSelector(`${rightC} canvas`, { timeout: 20000 });
+    await win.click('#btn-sync'); // 범위별 이동을 독립적으로 확인한다
+    const count = win.locator('#pdf-find-count');
+    const leftHighlights = win.locator('.pdf-pane[data-side=left] .textLayer .highlight');
+    const rightHighlights = win.locator('.pdf-pane[data-side=right] .textLayer .highlight');
+
+    await expect(win.locator('#pdf-find-scope')).toHaveValue('all');
+    await win.fill('#pdf-find', 'Page');
+    await expect(count).toHaveText('L 1/5  R 1/5', { timeout: 10000 });
+    await expect.poll(() => leftHighlights.count()).toBeGreaterThan(0);
+    await expect.poll(() => rightHighlights.count()).toBeGreaterThan(0);
+
+    await win.selectOption('#pdf-find-scope', 'left');
+    await expect(count).toHaveText('L 1/5');
+    await expect(rightHighlights).toHaveCount(0);
+    await win.click('#btn-find-next');
+    await expect(count).toHaveText('L 2/5');
+    await expect(win.locator('#pdf-status')).toContainText('R 1/5');
+
+    await win.selectOption('#pdf-find-scope', 'right');
+    await expect(count).toHaveText('R 1/5');
+    await expect(leftHighlights).toHaveCount(0);
+    await win.click('#btn-find-next');
+    await expect(count).toHaveText('R 2/5');
+    await expect(win.locator('#pdf-status')).toContainText('L 2/5');
+
+    await win.selectOption('#pdf-find-scope', 'all');
+    await expect(count).toHaveText(/L [1-5]\/5  R [1-5]\/5/);
+    await expect.poll(() => leftHighlights.count()).toBeGreaterThan(0);
+    await expect.poll(() => rightHighlights.count()).toBeGreaterThan(0);
+    await win.fill('#pdf-find', '');
+    await expect(count).toHaveText('');
+    await expect(leftHighlights).toHaveCount(0);
+    await expect(rightHighlights).toHaveCount(0);
+  } finally {
+    await app.close();
+    fs.rmSync(a, { force: true }); fs.rmSync(b, { force: true });
+  }
+});
+
 test('링크 히스토리: 링크로 튄 뒤 뒤로/앞으로 (버튼 + ⌘←/→)', async () => {
   const a = path.join(os.tmpdir(), `wc-link-${Date.now()}.pdf`);
   fs.writeFileSync(a, makePdf(5, { height: 900, linkTo: 4 })); // 1쪽에 4쪽으로 가는 내부 링크

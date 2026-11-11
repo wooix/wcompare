@@ -72,11 +72,12 @@ export function createPdfViewer(hostEl) {
   }
 
   // again=true면 같은 질의에서 다음/이전 일치로만 이동한다(재검색 없음).
-  function find(query, { again = false, findPrevious = false } = {}) {
+  function find(query, { again = false, immediate = false, findPrevious = false } = {}) {
     if (!doc) return;
     eventBus.dispatch('find', {
       source: null,
-      type: again ? 'again' : '',
+      // 범위 전환은 pdf.js의 일반 검색 지연을 기다리지 않고 첫 결과를 고른다.
+      type: again ? 'again' : immediate ? 'scopechange' : '',
       query,
       caseSensitive: false,
       entireWord: false,

@@ -217,12 +217,14 @@ function ensureDualView() {
   return dualView;
 }
 // 원문/번역본은 텍스트가 달라 한쪽만 걸리는 게 정상 → 양쪽 결과를 따로 보여준다.
-function renderFindCount({ query, left, right }) {
+function renderFindCount({ query, scope, left, right }) {
   const el = $('pdf-find-count');
   if (!query) { el.textContent = ''; el.classList.remove('miss'); return; }
   const fmt = (c) => (c ? `${c.total ? c.current : 0}/${c.total}` : '–');
-  el.textContent = `L ${fmt(left)}  R ${fmt(right)}`;
-  el.classList.toggle('miss', !(left?.total || right?.total));
+  el.textContent = scope === 'left' ? `L ${fmt(left)}`
+    : scope === 'right' ? `R ${fmt(right)}` : `L ${fmt(left)}  R ${fmt(right)}`;
+  el.classList.toggle('miss', scope === 'left' ? !left?.total
+    : scope === 'right' ? !right?.total : !(left?.total || right?.total));
 }
 function renderPdfStatus(st) {
   pdfState = st;
@@ -1671,8 +1673,9 @@ $('pdfview').addEventListener('click', (e) => {
 
 // ===== 문자열 검색 =====
 const findInput = $('pdf-find');
+const findScopeInput = $('pdf-find-scope');
 let findTimer = 0;
-const runFind = (prev = false) => dualView?.find(findInput.value.trim(), { prev });
+const runFind = (prev = false) => dualView?.find(findInput.value.trim(), { prev, scope: findScopeInput.value });
 
 findInput.addEventListener('input', () => {
   clearTimeout(findTimer);
@@ -1680,8 +1683,9 @@ findInput.addEventListener('input', () => {
 });
 findInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); clearTimeout(findTimer); runFind(e.shiftKey); }
-  else if (e.key === 'Escape') { e.preventDefault(); findInput.value = ''; dualView?.find(''); findInput.blur(); }
+  else if (e.key === 'Escape') { e.preventDefault(); clearTimeout(findTimer); findInput.value = ''; runFind(); findInput.blur(); }
 });
+findScopeInput.addEventListener('change', () => { clearTimeout(findTimer); runFind(); });
 $('btn-find-next').onclick = () => runFind(false);
 $('btn-find-prev').onclick = () => runFind(true);
 const pdfPageInput = $('pdf-page');
