@@ -1,0 +1,38 @@
+[
+  {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanskr/NotoSansKR%5Bwght%5D.ttf",
+    "file": "NotoSansKR.woff2",
+    "bytes": 3908716,
+    "sha256": "f484190a87503ac2af2cf9771ec35122128453fe0cd92f4368117562d99547e6"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanskr/OFL.txt",
+    "file": "NotoSansKR-OFL.txt",
+    "bytes": 4388,
+    "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/notoserifkr/NotoSerifKR%5Bwght%5D.ttf",
+    "file": "NotoSerifKR.woff2",
+    "bytes": 5859208,
+    "sha256": "e873199ed8f2a76e32c7239e877c6d0e89ed06d0df73bc4d718e3ddd05c2fa00"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/notoserifkr/OFL.txt",
+    "file": "NotoSerifKR-OFL.txt",
+    "bytes": 4350,
+    "sha256": "5e0da210fb04058a8c0087985d2d456b931c2579811a49655721d3cf0c36b6d6"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/stixtwomath/OFL.txt",
+    "file": "STIXTwoMath-OFL.txt",
+    "bytes": 4519,
+    "sha256": "0c8825913b60d858aacdb33c4ca6660a7d64b0d6464702efbb19313f5765861a"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/stixtwomath/STIXTwoMath-Regular.ttf",
+    "file": "STIXTwoMath.ttf",
+    "bytes": 1517976,
+    "sha256": "562551b15b836e6e01d1b7350909baf3c8c8d83260c1190fbf4544333e6936de"
+  }
+]

@@ -320,7 +320,7 @@ export function createSummaryPanel(hostEl, { onGenerate, onGenerateAll, onSource
 
   // 흐름도가 숨겨진 동안 도착하면 drawFlow가 clientWidth 0을 보고 조용히 포기하는데, 재시도 트리거가
   // setTab 하나뿐이면 보기 형태를 바꿔 패널이 다시 드러나도 아무도 다시 부르지 않아 빈 화면이 영구히 남는다
-  // (흐름도 탭을 켠 채 '대조형'으로 갔다가 '3분할'로 돌아오는 경로가 정확히 그렇다).
+  // (흐름도 탭에서 요약을 숨겼다가 다시 표시하는 경우도 해당한다).
   // → 패널이 스스로 가시성 회복을 감지하게 한다. display:none은 IntersectionObserver가 못 잡는 경우가 있어
   // 폭 변화를 보는 ResizeObserver를 쓴다(display:none이면 폭이 0으로 관측된다).
   // 관찰자는 하나만 만들고 reset에서도 끊지 않는다 — 패널이 살아 있는 한 계속 필요하다.

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f5ef">
+  <meta name="description" content="원문과 한국어 번역을 함께 읽는 논문 학습 자료">
+  <title>논문을 읽는 길</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23293d37'/%3E%3Cpath d='M10 10h9c4 0 6 2 6 6v15c-2-3-5-4-9-4h-6zm20 0h-3' fill='none' stroke='%23f5efe0' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="fonts.css">
+  <link rel="stylesheet" href="design-tokens.css">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="reading-tools.css">
+  <script src="reading-core.js" defer></script>
+  <script src="reading-tools.js" defer></script>
+  <script src="reading-position.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#reader">본문으로 건너뛰기</a>
+  <aside class="sidebar" id="sidebar" aria-label="논문 목차">
+    <a class="brand" href="#start" aria-label="논문을 읽는 길, 시작 화면">
+      <svg width="32" height="34" viewBox="0 0 32 34" aria-hidden="true"><path d="M3 4h9c4 0 5 2 5 5v22c-2-3-5-4-8-4H3zM17 9c0-3 2-5 6-5h6v23h-5c-3 0-5 1-7 4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+      <span>논문을 읽는 길<small>PAPER, AT YOUR PACE</small></span>
+    </a>
+    <div class="book-label"><span class="status-dot"></span> <span id="paper-subject"></span></div>
+    <button class="search-launch" id="search-launch"><span>논문 속에서 찾기</span><kbd>⌘ K</kbd></button>
+    <div class="tree-controls"><span>전체 목차</span><button id="toc-expand">모두 펼치기</button><button id="toc-collapse">접기</button></div>
+    <button id="toc-locate" class="current-location"><span>현재 위치</span><strong id="current-location-label">읽기 안내</strong><b aria-hidden="true">⌖</b></button>
+    <nav id="toc"><p class="loading">목차를 불러오고 있습니다.</p></nav>
+      <div class="sidebar-bottom"><span id="read-count">나의 읽기 기록</span><button id="resume" hidden>이어서 읽기 ↗</button><div class="book-progress"><span id="book-progress"></span></div><p>읽던 위치를 자동으로 저장합니다.</p></div>
+  </aside>
+  <button class="mobile-scrim" id="mobile-scrim" aria-label="목차 닫기" hidden></button>
+  <div class="workspace">
+    <header class="toolbar">
+      <button id="menu-toggle" class="icon-button mobile-only" aria-label="목차 열기">☰</button>
+      <div class="breadcrumb" id="breadcrumb">읽기 안내</div>
+      <div class="reading-tools">
+        <button class="tool mobile-library" data-panel="library">자료</button>
+        <button class="tool" id="compare-toggle" aria-pressed="false" title="영어 원문을 한국어 문단 아래에 함께 표시">원문 함께</button>
+        <div class="font-tools" aria-label="글자 크기"><button id="font-down" title="글자 작게" aria-label="글자 작게">가−</button><button id="font-up" title="글자 크게" aria-label="글자 크게">가+</button></div>
+        <button id="theme-toggle" class="icon-button" aria-label="어두운 화면으로 전환" title="화면 색상 전환">◐</button>
+      </div>
+      <div class="scroll-progress"><span id="scroll-progress"></span></div>
+    </header>
+    <div class="page-grid">
+      <main id="reader" tabindex="-1"><p class="loading">읽기 자료를 불러오고 있습니다.</p></main>
+      <aside class="margin-notes" aria-label="곁에 두는 자료">
+        <p class="eyebrow">BESIDE YOUR READING</p>
+        <h2>곁에 두는 자료</h2>
+        <p class="margin-description">읽던 자리를 떠나지 않고<br>필요한 만큼만 살펴보세요.</p>
+        <div id="context-links"></div>
+        <button class="margin-link" data-panel="terminology"><span>Terminology (용어집)</span><small>A–Z · 한글 병기 조절</small><b>↗</b></button>
+        <button class="margin-link" data-panel="highlights"><span>Highlights (하이라이트) <i data-highlight-count>0</i></span><small>목차 순서로 모은 나의 문장</small><b>↗</b></button>
+        <div id="resource-links"></div>
+        <div class="margin-rule"></div>
+        <p class="source-key"><span class="key translation-key"></span> 본문: 원문 한국어 번역</p>
+        <p class="source-key"><span class="key ai-key"></span> 초록색 안내: AI 보조 설명</p>
+        <a class="original-link" id="original-pdf" target="_blank" rel="noopener">원문 PDF ↗ <small id="pdf-description"></small></a>
+        <button class="quiet" data-panel="about">자료 정보 · 번역 범위</button>
+      </aside>
+    </div>
+    <footer class="site-footer" id="source-footer"></footer>
+  </div>
+  <dialog id="search-dialog" class="search-dialog" aria-labelledby="search-title"><div class="dialog-top"><h2 id="search-title">논문 속에서 찾기</h2><button data-close="search-dialog" class="icon-button" aria-label="검색 닫기">×</button></div><label class="search-input-wrap"><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="용어, 문장, 주제를 입력하세요" autocomplete="off"></label><p class="search-hint">영어와 한국어로 검색할 수 있습니다.</p><div id="search-results"></div></dialog>
+  <dialog id="side-panel" class="side-panel" aria-labelledby="panel-title"><div class="panel-top"><div><p class="eyebrow" id="panel-label">곁에 두는 자료</p><h2 id="panel-title">보충 자료</h2></div><button class="icon-button" data-close="side-panel" aria-label="보충 자료 닫기">×</button></div><div id="panel-content" class="paper-content"></div><div class="panel-bottom"><button data-close="side-panel">읽던 자리로 돌아가기 ←</button></div></dialog>
+  <div id="selection-tools" class="selection-tools" role="toolbar" aria-label="선택한 문장" hidden><button id="save-highlight"><span aria-hidden="true">▰</span> 하이라이트</button><button id="dismiss-selection" aria-label="선택 도구 닫기">×</button></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

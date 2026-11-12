@@ -107,6 +107,10 @@ function build() {
     // (Chromium이 자동 처리하는 게 아니라 애플리케이션 메뉴의 accelerator를 통해 라우팅된다).
     { role: 'editMenu' },
     { label: 'View', submenu: [
+      { label: '대조 (원문 · 번역)', click: () => send('menu:layout-compare') },
+      { label: '설명 (paper-helper)', click: () => send('menu:layout-explain') },
+      { label: '요약 표시 / 숨기기', click: () => send('menu:toggle-summary') },
+      { type: 'separator' },
       { label: 'Next Diff', accelerator: 'F7', click: () => send('menu:next-diff') },
       { label: 'Prev Diff', accelerator: 'Shift+F7', click: () => send('menu:prev-diff') },
       { label: 'Toggle Whitespace', click: () => send('menu:toggle-ws') },

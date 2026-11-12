@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Paper reading companion input, version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "paper", "groups", "chapters", "sourceInventory", "glossary", "references"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "paper": {
+      "type": "object",
+      "required": ["id", "version", "title", "shortTitle", "subject", "authors", "date", "citation", "sourceUrl", "license", "cover"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+        "version": {"type": "string"},
+        "title": {"type": "string"},
+        "shortTitle": {"type": "string"},
+        "subject": {"type": "string"},
+        "authors": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "date": {"type": "string"},
+        "citation": {"type": "string"},
+        "sourceUrl": {"type": "string"},
+        "pdfUrl": {"type": "string"},
+        "license": {"type": "object", "required": ["label", "url"], "properties": {"label": {"type": "string"}, "url": {"type": "string"}}},
+        "cover": {
+          "type": "object",
+          "required": ["title", "subtitle", "description", "question"],
+          "properties": {"title": {"type": "string"}, "subtitle": {"type": "string"}, "description": {"type": "string"}, "question": {"type": "string"}}
+        }
+      }
+    },
+    "sourceInventory": {
+      "type": "object",
+      "description": "A complete source-unit inventory produced before translation. Each unit is assigned to one translated block or heading.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["location"],
+        "properties": {"location": {"type": "string"}, "text": {"type": "string"}, "html": {"type": "string"}},
+        "oneOf": [{"required": ["text"]}, {"required": ["html"]}]
+      }
+    },
+    "groups": {
+      "type": "array", "minItems": 1,
+      "items": {"type": "object", "required": ["id", "title", "description", "chapters"], "properties": {
+        "id": {"type": "string"}, "title": {"type": "string"}, "description": {"type": "string"},
+        "chapters": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^S[1-9][0-9]*$"}}
+      }}
+    },
+    "abstract": {"type": "array", "items": {"$ref": "#/$defs/block"}},
+    "chapters": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/chapter"}},
+    "glossary": {"type": "array", "items": {"type": "object", "required": ["term", "description", "target"], "properties": {
+      "term": {"type": "string"}, "description": {"type": "string"}, "target": {"type": "string"}
+    }}},
+    "references": {"type": "array", "items": {"type": "object", "required": ["id"], "properties": {
+      "id": {"type": "string", "pattern": "^bib\\."}, "text": {"type": "string"}, "html": {"type": "string"}
+    }, "oneOf": [{"required": ["text"]}, {"required": ["html"]}]}}
+  },
+  "$defs": {
+    "guide": {"type": "object", "required": ["intro", "takeaways"], "properties": {
+      "intro": {"type": "string", "minLength": 1},
+      "takeaways": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+      "next": {"type": "string"}
+    }},
+    "chapter": {"type": "object", "required": ["id", "kind", "label", "subtitle"], "properties": {
+      "id": {"type": "string", "pattern": "^[SA][1-9][0-9]*$"},
+      "kind": {"enum": ["main", "appendix"]}, "label": {"type": "string"}, "subtitle": {"type": "string"},
+      "sourceId": {"type": "string"}, "guide": {"$ref": "#/$defs/guide"},
+      "companions": {"type": "array", "items": {"type": "string"}},
+      "blocks": {"type": "array", "items": {"$ref": "#/$defs/block"}},
+      "sections": {"type": "array", "items": {"$ref": "#/$defs/section"}}
+    }, "allOf": [{"if": {"properties": {"kind": {"const": "main"}}}, "then": {"required": ["guide"]}}]},
+    "section": {"type": "object", "required": ["id", "title"], "properties": {
+      "id": {"type": "string"}, "title": {"type": "string"}, "sourceId": {"type": "string"},
+      "blocks": {"type": "array", "items": {"$ref": "#/$defs/block"}},
+      "sections": {"type": "array", "items": {"$ref": "#/$defs/section"}}, "recap": {"type": "string"}
+    }},
+    "block": {"type": "object", "required": ["id", "type"], "properties": {
+      "id": {"type": "string"}, "type": {"enum": ["paragraph", "html", "table", "figure", "callout"]},
+      "sourceId": {"type": "string"}, "origin": {"enum": ["translation", "ai"]},
+      "text": {"type": "string"}, "html": {"type": "string"}, "src": {"type": "string"},
+      "alt": {"type": "string"}, "title": {"type": "string"}
+    }, "allOf": [
+      {"oneOf": [{"required": ["text"]}, {"required": ["html"]}]},
+      {"if": {"properties": {"type": {"const": "figure"}}}, "then": {"required": ["src", "alt"]}},
+      {"if": {"properties": {"type": {"const": "callout"}}}, "then": {"required": ["title"]}}
+    ]}
+  }
+}

@@ -21,6 +21,7 @@ const WORKERS = {
 const common = { bundle: true, sourcemap: true, logLevel: 'info' };
 
 const configs = [
+  { ...common, entryPoints: ['src/mcp/server.js'], outfile: out('mcp/server.cjs'), platform: 'node', format: 'cjs' },
   // 렌더러: monaco 포함, iife
   // monaco-vim이 참조하는 editor.api를 monaco-editor 메인에 매핑(단일 monaco 인스턴스 보장)
   { ...common, entryPoints: ['src/renderer/app.js'], outfile: out('renderer/app.js'),

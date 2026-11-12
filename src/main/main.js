@@ -69,6 +69,7 @@ function createWindow(pair = { left: null, right: null }) {
   // (다른 창의 진행 중 번역·현재 프로젝트는 건드리지 않는다).
   const wc = win.webContents;
   wc.on('destroyed', () => { cancelForWebContents(wc.id); project.forget(wc.id); });
+  return win;
 }
 
 // ===== Finder에서 연 파일 (PDF 기본 앱) =====
@@ -106,8 +107,23 @@ app.on('open-file', (event, filePath) => {
 });
 
 app.on('web-contents-created', (_e, contents) => {
+  const showReaderSource = url => {
+    const source = require('./explanationProtocol').sourceForReaderUrl(url);
+    if (source) contents.send('explanation:show-source', source);
+    return !!source;
+  };
   contents.on('will-navigate', (e) => e.preventDefault());
-  contents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
+  contents.on('will-frame-navigate', (event) => {
+    if (showReaderSource(event.url)) { event.preventDefault(); return; }
+    if (event.isMainFrame || event.url.startsWith('paper:')) return;
+    event.preventDefault();
+    if (/^https?:\/\//.test(event.url)) shell.openExternal(event.url);
+  });
+  contents.setWindowOpenHandler(({ url }) => {
+    if (showReaderSource(url)) return { action: 'deny' };
+    if (/^https?:\/\//.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
 });
 
 app.whenReady().then(() => {
@@ -115,6 +131,16 @@ app.whenReady().then(() => {
   focusMode = createFocusMode({ app, BrowserWindow, screen, ipcMain });
   handleScheme();
   registerIpc();
+  const control = require('./controlServer').createControlServer({
+    app, BrowserWindow, ipcMain, createWindow,
+    settings: require('./settings'),
+    download: (url, { refresh }) => require('./pdfDownload').downloadPdf(url, {
+      dir: require('./settings').dirFor('downloads'), force: refresh,
+      fetch: (address, options) => require('electron').net.fetch(address, { ...options, signal: AbortSignal.timeout(45000) }),
+    }),
+    registerFile: p => { const real = allowPath(p); require('./recentFiles').record(real); return real; },
+  });
+  control.start().catch(error => console.error('wcompare MCP:', error.message));
   project.setOnChange(applyMenu); // 최근 목록이 바뀌면 메뉴를 다시 세팅
   require('./recentFiles').setOnChange(applyMenu);
   require('./openFiles').setOnChange(applyMenu);

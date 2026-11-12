@@ -1,0 +1,247 @@
+{
+  "schemaVersion": 1,
+  "paper": {
+    "id": "process-demo",
+    "version": "v1",
+    "title": "A Second Document in the Same Reader",
+    "shortTitle": "두 번째 읽기 시연",
+    "subject": "SECOND TEMPLATE DEMONSTRATION",
+    "authors": [
+      "Reader Template Example"
+    ],
+    "date": "2026-11-12",
+    "citation": "Example B · 기능 검증용 문서",
+    "sourceUrl": "https://example.org/queue-demo",
+    "license": {
+      "label": "직접 작성한 시연용 데이터",
+      "url": "https://example.org/queue-demo"
+    },
+    "cover": {
+      "title": "다른 문서도,",
+      "subtitle": "같은 화면으로 읽다.",
+      "description": "이 문서는 고정된 읽기 화면과 기능을 확인하기 위한 시연용 데이터입니다.",
+      "question": "같은 읽기 화면에서 용어와 원문을 어떻게 확인할 수 있을까?"
+    }
+  },
+  "groups": [
+    {
+      "id": "flow",
+      "title": "한 장으로 구성한 다른 문서",
+      "description": "입력에서 결과까지 같은 문서를 따라갑니다.",
+      "chapters": [
+        "S1"
+      ]
+    }
+  ],
+  "abstract": [
+    {
+      "id": "abstract1-p01",
+      "type": "paragraph",
+      "sourceId": "source-abstract1-p01",
+      "text": "이 문서는 논문을 읽는 길의 화면과 기능을 검증하기 위한 시연용 데이터다."
+    }
+  ],
+  "chapters": [
+    {
+      "id": "S1",
+      "kind": "main",
+      "label": "두 번째 문서의 첫 장",
+      "subtitle": "Input and Processing",
+      "guide": {
+        "intro": "Queue (큐)에서 항목 하나가 처리되는 과정을 따라가며 읽기 화면의 기능을 확인합니다.",
+        "takeaways": [
+          "각 문단에는 원문으로 돌아갈 수 있는 연결이 있습니다.",
+          "Queue (큐)의 한글 병기는 용어집에서 조절할 수 있습니다."
+        ],
+        "next": "다음 장에서는 수식과 표가 같은 읽기 흐름에 놓이는 모습을 확인합니다."
+      },
+      "companions": [
+        "A1"
+      ],
+      "blocks": [
+        {
+          "id": "S1-p01",
+          "type": "paragraph",
+          "sourceId": "source-S1-p01",
+          "text": "Queue (큐)에 들어온 항목은 Worker (작업자)가 순서에 따라 처리한다. 이 예시에서는 처리 순서를 바꾸었을 때 화면의 목차, 용어집과 읽기 위치가 어떻게 유지되는지 살펴본다. Batch (배치)의 크기는 같은 화면 안에서 비교할 수 있다. 각 문단은 영어 원문과 연결되며, 중요한 문장은 선택하여 따로 모아볼 수 있다. 이미 익숙한 용어는 용어집에서 한글 병기를 제거한 뒤 영어로 읽을 수 있다. 선택한 문장은 다시 접속한 뒤에도 같은 위치에서 확인할 수 있다."
+        },
+        {
+          "id": "S1-p02",
+          "type": "paragraph",
+          "sourceId": "source-S1-p02",
+          "text": "Queue (큐)에 들어온 항목은 Worker (작업자)가 순서에 따라 처리한다. 이 예시에서는 처리 순서를 바꾸었을 때 화면의 목차, 용어집과 읽기 위치가 어떻게 유지되는지 살펴본다. Batch (배치)의 크기는 같은 화면 안에서 비교할 수 있다. 각 문단은 영어 원문과 연결되며, 중요한 문장은 선택하여 따로 모아볼 수 있다. 이미 익숙한 용어는 용어집에서 한글 병기를 제거한 뒤 영어로 읽을 수 있다. 선택한 문장은 다시 접속한 뒤에도 같은 위치에서 확인할 수 있다."
+        }
+      ],
+      "sections": [
+        {
+          "id": "S1.SS1",
+          "title": "1.1 Queue (큐)에서 시작하기",
+          "blocks": [
+            {
+              "id": "S1-p03",
+              "type": "paragraph",
+              "sourceId": "source-S1-p03",
+              "text": "Queue (큐)에 들어온 항목은 Worker (작업자)가 순서에 따라 처리한다. 이 예시에서는 처리 순서를 바꾸었을 때 화면의 목차, 용어집과 읽기 위치가 어떻게 유지되는지 살펴본다. Batch (배치)의 크기는 같은 화면 안에서 비교할 수 있다. 각 문단은 영어 원문과 연결되며, 중요한 문장은 선택하여 따로 모아볼 수 있다. 이미 익숙한 용어는 용어집에서 한글 병기를 제거한 뒤 영어로 읽을 수 있다. 선택한 문장은 다시 접속한 뒤에도 같은 위치에서 확인할 수 있다."
+            },
+            {
+              "id": "S1-p04",
+              "type": "paragraph",
+              "sourceId": "source-S1-p04",
+              "text": "Queue (큐)에 들어온 항목은 Worker (작업자)가 순서에 따라 처리한다. 이 예시에서는 처리 순서를 바꾸었을 때 화면의 목차, 용어집과 읽기 위치가 어떻게 유지되는지 살펴본다. Batch (배치)의 크기는 같은 화면 안에서 비교할 수 있다. 각 문단은 영어 원문과 연결되며, 중요한 문장은 선택하여 따로 모아볼 수 있다. 이미 익숙한 용어는 용어집에서 한글 병기를 제거한 뒤 영어로 읽을 수 있다. 선택한 문장은 다시 접속한 뒤에도 같은 위치에서 확인할 수 있다."
+            },
+            {
+              "id": "S1-p05",
+              "type": "paragraph",
+              "sourceId": "source-S1-p05",
+              "text": "Queue (큐)에 들어온 항목은 Worker (작업자)가 순서에 따라 처리한다. 이 예시에서는 처리 순서를 바꾸었을 때 화면의 목차, 용어집과 읽기 위치가 어떻게 유지되는지 살펴본다. Batch (배치)의 크기는 같은 화면 안에서 비교할 수 있다. 각 문단은 영어 원문과 연결되며, 중요한 문장은 선택하여 따로 모아볼 수 있다. 이미 익숙한 용어는 용어집에서 한글 병기를 제거한 뒤 영어로 읽을 수 있다. 선택한 문장은 다시 접속한 뒤에도 같은 위치에서 확인할 수 있다."
+            },
+            {
+              "id": "S1-p06",
+              "type": "paragraph",
+              "sourceId": "source-S1-p06",
+              "text": "Queue (큐)에 들어온 항목은 Worker (작업자)가 순서에 따라 처리한다. 이 예시에서는 처리 순서를 바꾸었을 때 화면의 목차, 용어집과 읽기 위치가 어떻게 유지되는지 살펴본다. Batch (배치)의 크기는 같은 화면 안에서 비교할 수 있다. 각 문단은 영어 원문과 연결되며, 중요한 문장은 선택하여 따로 모아볼 수 있다. 이미 익숙한 용어는 용어집에서 한글 병기를 제거한 뒤 영어로 읽을 수 있다. 선택한 문장은 다시 접속한 뒤에도 같은 위치에서 확인할 수 있다."
+            }
+          ],
+          "sections": [
+            {
+              "id": "S1.SS1.SSS1",
+              "title": "Worker (작업자)의 순서",
+              "blocks": [
+                {
+                  "id": "S1-p07",
+                  "type": "paragraph",
+                  "sourceId": "source-S1-p07",
+                  "text": "Queue (큐)에 들어온 항목은 Worker (작업자)가 순서에 따라 처리한다. 이 예시에서는 처리 순서를 바꾸었을 때 화면의 목차, 용어집과 읽기 위치가 어떻게 유지되는지 살펴본다. Batch (배치)의 크기는 같은 화면 안에서 비교할 수 있다. 각 문단은 영어 원문과 연결되며, 중요한 문장은 선택하여 따로 모아볼 수 있다. 이미 익숙한 용어는 용어집에서 한글 병기를 제거한 뒤 영어로 읽을 수 있다. 선택한 문장은 다시 접속한 뒤에도 같은 위치에서 확인할 수 있다."
+                },
+                {
+                  "id": "S1-p08",
+                  "type": "paragraph",
+                  "sourceId": "source-S1-p08",
+                  "text": "Queue (큐)에 들어온 항목은 Worker (작업자)가 순서에 따라 처리한다. 이 예시에서는 처리 순서를 바꾸었을 때 화면의 목차, 용어집과 읽기 위치가 어떻게 유지되는지 살펴본다. Batch (배치)의 크기는 같은 화면 안에서 비교할 수 있다. 각 문단은 영어 원문과 연결되며, 중요한 문장은 선택하여 따로 모아볼 수 있다. 이미 익숙한 용어는 용어집에서 한글 병기를 제거한 뒤 영어로 읽을 수 있다. 선택한 문장은 다시 접속한 뒤에도 같은 위치에서 확인할 수 있다."
+                },
+                {
+                  "id": "S1-p09",
+                  "type": "paragraph",
+                  "sourceId": "source-S1-p09",
+                  "text": "Queue (큐)에 들어온 항목은 Worker (작업자)가 순서에 따라 처리한다. 이 예시에서는 처리 순서를 바꾸었을 때 화면의 목차, 용어집과 읽기 위치가 어떻게 유지되는지 살펴본다. Batch (배치)의 크기는 같은 화면 안에서 비교할 수 있다. 각 문단은 영어 원문과 연결되며, 중요한 문장은 선택하여 따로 모아볼 수 있다. 이미 익숙한 용어는 용어집에서 한글 병기를 제거한 뒤 영어로 읽을 수 있다. 선택한 문장은 다시 접속한 뒤에도 같은 위치에서 확인할 수 있다."
+                }
+              ],
+              "sections": [
+                {
+                  "id": "S1.SS1.SSS1.P1",
+                  "title": "Batch (배치)와 항목",
+                  "blocks": [
+                    {
+                      "id": "S1-p10",
+                      "type": "paragraph",
+                      "sourceId": "source-S1-p10",
+                      "text": "Queue (큐)에 들어온 항목은 Worker (작업자)가 순서에 따라 처리한다. 이 예시에서는 처리 순서를 바꾸었을 때 화면의 목차, 용어집과 읽기 위치가 어떻게 유지되는지 살펴본다. Batch (배치)의 크기는 같은 화면 안에서 비교할 수 있다. 각 문단은 영어 원문과 연결되며, 중요한 문장은 선택하여 따로 모아볼 수 있다. 이미 익숙한 용어는 용어집에서 한글 병기를 제거한 뒤 영어로 읽을 수 있다. 선택한 문장은 다시 접속한 뒤에도 같은 위치에서 확인할 수 있다."
+                    },
+                    {
+                      "id": "S1-p11",
+                      "type": "paragraph",
+                      "sourceId": "source-S1-p11",
+                      "text": "Queue (큐)에 들어온 항목은 Worker (작업자)가 순서에 따라 처리한다. 이 예시에서는 처리 순서를 바꾸었을 때 화면의 목차, 용어집과 읽기 위치가 어떻게 유지되는지 살펴본다. Batch (배치)의 크기는 같은 화면 안에서 비교할 수 있다. 각 문단은 영어 원문과 연결되며, 중요한 문장은 선택하여 따로 모아볼 수 있다. 이미 익숙한 용어는 용어집에서 한글 병기를 제거한 뒤 영어로 읽을 수 있다. 선택한 문장은 다시 접속한 뒤에도 같은 위치에서 확인할 수 있다."
+                    },
+                    {
+                      "id": "S1-p12",
+                      "type": "paragraph",
+                      "sourceId": "source-S1-p12",
+                      "text": "Queue (큐)에 들어온 항목은 Worker (작업자)가 순서에 따라 처리한다. 이 예시에서는 처리 순서를 바꾸었을 때 화면의 목차, 용어집과 읽기 위치가 어떻게 유지되는지 살펴본다. Batch (배치)의 크기는 같은 화면 안에서 비교할 수 있다. 각 문단은 영어 원문과 연결되며, 중요한 문장은 선택하여 따로 모아볼 수 있다. 이미 익숙한 용어는 용어집에서 한글 병기를 제거한 뒤 영어로 읽을 수 있다. 선택한 문장은 다시 접속한 뒤에도 같은 위치에서 확인할 수 있다."
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "recap": "Queue (큐)의 한 항목에서 시작하여 Worker (작업자)의 처리 순서를 살펴보았습니다."
+        }
+      ]
+    },
+    {
+      "id": "A1",
+      "kind": "appendix",
+      "label": "기호와 표기법",
+      "subtitle": "부록 · 시연용 용어",
+      "blocks": [
+        {
+          "id": "A1-p01",
+          "type": "paragraph",
+          "sourceId": "source-A1-p01",
+          "text": "Queue (큐), Worker (작업자), Batch (배치)는 이 시연에서 사용하는 용어다."
+        }
+      ]
+    }
+  ],
+  "sourceInventory": {
+    "source-S1-p01": {
+      "location": "S1-p01",
+      "text": "A worker processes items from a queue in order. This example checks the table of contents, terminology controls, and reading position while examining processing order. A batch size can be compared within the same reader. Each paragraph links to its English source. Selected passages can be collected for later reading. A familiar term can be shown in English through the terminology list. Saved passages remain available after reopening the reader."
+    },
+    "source-S1-p02": {
+      "location": "S1-p02",
+      "text": "A worker processes items from a queue in order. This example checks the table of contents, terminology controls, and reading position while examining processing order. A batch size can be compared within the same reader. Each paragraph links to its English source. Selected passages can be collected for later reading. A familiar term can be shown in English through the terminology list. Saved passages remain available after reopening the reader."
+    },
+    "source-S1-p03": {
+      "location": "S1-p03",
+      "text": "A worker processes items from a queue in order. This example checks the table of contents, terminology controls, and reading position while examining processing order. A batch size can be compared within the same reader. Each paragraph links to its English source. Selected passages can be collected for later reading. A familiar term can be shown in English through the terminology list. Saved passages remain available after reopening the reader."
+    },
+    "source-S1-p04": {
+      "location": "S1-p04",
+      "text": "A worker processes items from a queue in order. This example checks the table of contents, terminology controls, and reading position while examining processing order. A batch size can be compared within the same reader. Each paragraph links to its English source. Selected passages can be collected for later reading. A familiar term can be shown in English through the terminology list. Saved passages remain available after reopening the reader."
+    },
+    "source-S1-p05": {
+      "location": "S1-p05",
+      "text": "A worker processes items from a queue in order. This example checks the table of contents, terminology controls, and reading position while examining processing order. A batch size can be compared within the same reader. Each paragraph links to its English source. Selected passages can be collected for later reading. A familiar term can be shown in English through the terminology list. Saved passages remain available after reopening the reader."
+    },
+    "source-S1-p06": {
+      "location": "S1-p06",
+      "text": "A worker processes items from a queue in order. This example checks the table of contents, terminology controls, and reading position while examining processing order. A batch size can be compared within the same reader. Each paragraph links to its English source. Selected passages can be collected for later reading. A familiar term can be shown in English through the terminology list. Saved passages remain available after reopening the reader."
+    },
+    "source-S1-p07": {
+      "location": "S1-p07",
+      "text": "A worker processes items from a queue in order. This example checks the table of contents, terminology controls, and reading position while examining processing order. A batch size can be compared within the same reader. Each paragraph links to its English source. Selected passages can be collected for later reading. A familiar term can be shown in English through the terminology list. Saved passages remain available after reopening the reader."
+    },
+    "source-S1-p08": {
+      "location": "S1-p08",
+      "text": "A worker processes items from a queue in order. This example checks the table of contents, terminology controls, and reading position while examining processing order. A batch size can be compared within the same reader. Each paragraph links to its English source. Selected passages can be collected for later reading. A familiar term can be shown in English through the terminology list. Saved passages remain available after reopening the reader."
+    },
+    "source-S1-p09": {
+      "location": "S1-p09",
+      "text": "A worker processes items from a queue in order. This example checks the table of contents, terminology controls, and reading position while examining processing order. A batch size can be compared within the same reader. Each paragraph links to its English source. Selected passages can be collected for later reading. A familiar term can be shown in English through the terminology list. Saved passages remain available after reopening the reader."
+    },
+    "source-S1-p10": {
+      "location": "S1-p10",
+      "text": "A worker processes items from a queue in order. This example checks the table of contents, terminology controls, and reading position while examining processing order. A batch size can be compared within the same reader. Each paragraph links to its English source. Selected passages can be collected for later reading. A familiar term can be shown in English through the terminology list. Saved passages remain available after reopening the reader."
+    },
+    "source-S1-p11": {
+      "location": "S1-p11",
+      "text": "A worker processes items from a queue in order. This example checks the table of contents, terminology controls, and reading position while examining processing order. A batch size can be compared within the same reader. Each paragraph links to its English source. Selected passages can be collected for later reading. A familiar term can be shown in English through the terminology list. Saved passages remain available after reopening the reader."
+    },
+    "source-S1-p12": {
+      "location": "S1-p12",
+      "text": "A worker processes items from a queue in order. This example checks the table of contents, terminology controls, and reading position while examining processing order. A batch size can be compared within the same reader. Each paragraph links to its English source. Selected passages can be collected for later reading. A familiar term can be shown in English through the terminology list. Saved passages remain available after reopening the reader."
+    },
+    "source-abstract1-p01": {
+      "location": "abstract1-p01",
+      "text": "This document contains demonstration data for testing a paper reader."
+    },
+    "source-A1-p01": {
+      "location": "A1-p01",
+      "text": "Queue, worker, and batch are the terms used in this demonstration."
+    }
+  },
+  "glossary": [
+    {
+      "term": "Queue (큐)",
+      "description": "처리할 항목을 두는 순서를 설명하는 시연용 개념입니다.",
+      "target": "S1.SS1"
+    },
+    {
+      "term": "Worker (작업자)",
+      "description": "Queue (큐)의 항목을 처리하는 주체입니다.",
+      "target": "S1.SS1.SSS1"
+    }
+  ],
+  "references": []
+}

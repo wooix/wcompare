@@ -1,7 +1,7 @@
 {
   "name": "wcompare",
   "version": "0.1.0",
-  "buildVersion": "2026-11-11-001",
+  "buildVersion": "2026-11-13-002",
   "description": "Simple side-by-side file compare with syntax, lint, vim",
   "main": "src/main/main.js",
   "type": "commonjs",
@@ -11,6 +11,7 @@
     "start": "electron .",
     "test": "node --test test/*.test.js",
     "e2e": "npm run build && playwright test",
+    "mcp:register": "node scripts/register-mcp.mjs",
     "package:mac": "node scripts/bump-version.mjs && npm run build && node scripts/pack-mac.mjs"
   },
   "license": "MIT",
@@ -24,6 +25,7 @@
     "pdfjs-dist": "^6.0.227"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@playwright/test": "^1.61.0",
     "electron": "^42.4.0",
     "esbuild": "^0.28.1"

@@ -282,7 +282,7 @@ test('고친 프롬프트가 실제 요약 CLI 인자에 실린다', async () =>
   await win.click('#settings-close');
 
   // 요약을 실제로 돌린다(가짜 CLI가 프롬프트를 받아 적는다).
-  await win.click('#btn-layout-summary');
+  await win.locator('#chk-summary').check();
   await win.click(`${S} .sum-all`);
   await expect(win.locator(`${S} .sum-pane[data-kind=overview]`))
     .toContainText('한 줄짜리 개요 본문', { timeout: 25000 });

@@ -15,7 +15,7 @@ const BUNDLE_ID = 'com.wooix.wcompare';
 const ROOT = path.resolve('.');
 const electronBin = require('electron');                          // .../dist/Electron.app/Contents/MacOS/Electron
 const electronApp = path.resolve(electronBin, '..', '..', '..');  // .../dist/Electron.app
-const OUT = path.join(ROOT, 'release');
+const OUT = path.resolve(process.env.WCOMPARE_PACKAGE_DIR || path.join(ROOT, 'release'));
 const APP = path.join(OUT, `${APP_NAME}.app`);
 
 // 1) 클린 후 Electron.app 복제 (번들 구조/심링크 보존 위해 ditto 사용)
@@ -41,7 +41,7 @@ const skip = (s) =>
 // src/ 전체 복사 — 메인 프로세스의 require 그래프(src/main → src/shared 등)가 번들 안에서 모두 해소되도록.
 // (src/renderer 소스는 런타임 미사용이지만 KB 단위라 함께 복사: 누락 리스크 제거가 우선)
 // 사전은 외부 앱(ShortcutDictionary)에 위임하므로 번들에 사전 데이터(assets)는 넣지 않는다.
-for (const d of ['src', 'dist']) {
+for (const d of ['src', 'dist', 'resources']) {
   cpSync(path.join(ROOT, d), path.join(APPDIR, d), { recursive: true, filter: (s) => !skip(s) });
 }
 

@@ -74,7 +74,7 @@ const set = (patch) => { inst().set(patch); return get(); };
 // summaries: 논문 요약 캐시 — LLM 호출이 느리고 비싸서 같은 논문을 다시 열면 즉시 복원해야 한다.
 const SUBDIRS = {
   documents: 'documents', translations: 'translations', projects: 'projects',
-  markers: 'markers', downloads: 'downloads', summaries: 'summaries',
+  markers: 'markers', downloads: 'downloads', summaries: 'summaries', explanations: 'explanations',
   // memo 모드가 쓰는 메모 원문(.md)과 번역본(.ko.md)이 함께 쌓이는 곳.
   memos: 'memos',
 };

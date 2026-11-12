@@ -321,9 +321,12 @@ export function createDualView(hostEl) {
   // 여기서는 "계산에서 뺀다"는 사실만 관리한다 — 다시 드러날 때 fit을 재계산해야
   // 폭 0으로 굳어 버린 배율이 남지 않는다.
   function setPaneVisible(side, on) {
-    const next = !on;
-    if (hidden[side] === next) return;
-    hidden[side] = next;
+    setPaneVisibility({ [side]: on });
+  }
+  function setPaneVisibility(visibility) {
+    const sides = SIDES.filter(side => typeof visibility[side] === 'boolean');
+    if (sides.every(side => hidden[side] === !visibility[side])) return;
+    for (const side of sides) hidden[side] = !visibility[side];
     if (fitWidth) applyFit(); else realign();
     emit();
   }
@@ -762,6 +765,7 @@ export function createDualView(hostEl) {
     getOutlineOf: (side) => viewers[side].getOutline(),
     destToPage: (side, dest) => viewers[side].destToPage(dest),
     setPaneVisible,
+    setPaneVisibility,
     // 바깥에서 열 폭을 바꿨을 때(요약 스플리터 드래그) 페이지 배율을 다시 맞춘다.
     // fit이 꺼져 있으면 사용자가 고른 배율을 지켜야 하므로 아무것도 하지 않는다.
     relayout: () => { if (fitWidth) applyFit(); },

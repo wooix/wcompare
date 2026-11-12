@@ -8,10 +8,12 @@ const ROOT = path.join(__dirname, '..', '..', 'dist', 'renderer');
 function registerScheme() {
   protocol.registerSchemesAsPrivileged([
     { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+    { scheme: 'paper', privileges: { standard: true, secure: true, supportFetchAPI: true } },
   ]);
 }
 
 function handleScheme() {
+  require('./explanationProtocol').handleReaderProtocol(protocol, net);
   // app://bundle/<file> → dist/renderer/<file>
   protocol.handle('app', (request) => {
     const url = new URL(request.url);

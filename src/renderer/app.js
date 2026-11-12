@@ -8,6 +8,7 @@ import { setupDnd } from './dnd.js';
 import { createDualView } from './pdfDualView.js';
 import { prepareReadingSource, READING_VERSION } from '../shared/readingSource.js';
 import { createSummaryPanel } from './summaryPanel.js';
+import { createExplanationPanel } from './explanationPanel.js';
 import { createPaneSplit } from './paneSplit.js';
 import './modern.css';
 import { initModernUX } from './modernUX.js';
@@ -91,6 +92,8 @@ let mode = 'diff';
 let reloadingFiles = false;
 let dualView = null;
 let summaryPanel = null;
+let explanationPanel = null;
+let explanationSource = null;
 let paneSplit = null; // 요약 폭 드래그 손잡이 — dualView와 요약 패널이 생긴 뒤에 만들어진다
 let memoView = null; // memo 모드 3열 뷰 — 처음 memo 모드에 들어갈 때 만든다
 // 메모 번역 진행 상태. PDF 번역(translating/translateStart/translateTimer)과 같은 짜임이다 —
@@ -104,17 +107,31 @@ let pdfState = null;
 let pdfPageEdited = false; // 페이지 입력의 실제 사용자 수정만 이동으로 처리한다
 
 // ===== PDF 보기 형태 =====
-// compare 원문|번역 · summary 원문|요약 · full 원문|번역|요약.
-// 어떤 열을 보여줄지만 #pdfview의 클래스로 끊는다 — 문서 로드 상태를 전혀 건드리지 않으므로
-// 형태를 오가도 열려 있던 PDF·마커·스크롤 위치가 그대로 남는다.
-// 프로젝트 파일(.wcproj)이 아니라 localStorage에 둔 이유: .wcproj는 필드 화이트리스트 + 버전 게이트라
-// 새 필드를 넣으면 구버전 앱과의 호환을 따로 정해야 하는데, 보기 형태는 문서가 아니라 "지금 이 창의
-// 취향"에 가깝다(Night/Dict 토글과 같은 성격).
-const LAYOUTS = ['compare', 'summary', 'full'];
+// 대조는 원문과 번역, 설명은 선택한 PDF와 HTML을 표시하며 요약은 독립적으로 켠다.
+// 표시 취향은 localStorage에 저장하고, 기존 보기 형태의 요약 선택도 이어받는다.
+const LAYOUTS = ['compare', 'explain'];
 const SUMMARY_KINDS = ['overview', 'narrative', 'sections', 'flow'];
 const SUMMARY_LABEL = { overview: '핵심 파악', narrative: '작동 원리', sections: '근거 확인', flow: '한눈에 보기' };
 let layout = 'compare';
-try { const v = localStorage.getItem('wc-layout'); if (LAYOUTS.includes(v)) layout = v; } catch { /* 스토리지 불가 */ }
+let showSummary = false;
+let representativeSide = 'left';
+try {
+  const saved = localStorage.getItem('wc-reader-mode');
+  if (LAYOUTS.includes(saved)) layout = saved;
+  const summary = localStorage.getItem('wc-summary-visible');
+  showSummary = summary === null ? ['summary', 'full'].includes(localStorage.getItem('wc-layout')) : summary === 'true';
+  if (localStorage.getItem('wc-reader-side') === 'right') representativeSide = 'right';
+} catch { /* Storage may be unavailable. */ }
+
+function syncExplanationDoc() {
+  const paths = Object.values(pdfPaths).filter(Boolean);
+  if (!paths.includes(explanationSource) || (/\.ko\.pdf$/i.test(explanationSource || '') && paths.some(p => !/\.ko\.pdf$/i.test(p)))) {
+    explanationSource = paths.find(p => !/\.ko\.pdf$/i.test(p)) || paths[0] || null;
+  }
+  const side = pdfPaths.left === explanationSource ? 'left' : 'right';
+  const doc = explanationSource ? { path: explanationSource, hash: pdfHashes[side] } : null;
+  return explanationPanel?.setDocument(doc);
+}
 
 function applyLayout() {
   const view = $('pdfview');
@@ -122,18 +139,42 @@ function applyLayout() {
     view.classList.toggle(`layout-${l}`, l === layout);
     $(`btn-layout-${l}`)?.classList.toggle('on', l === layout);
   }
-  // 요약형에서는 오른쪽 pane이 숨는다 → 폭이 0이라 비율 동기·page-width 계산에서 빼야 한다.
-  dualView?.setPaneVisible('right', layout !== 'summary');
+  // 숨긴 PDF는 스크롤 동기와 너비 맞춤 계산에서 제외한다.
+  let visibleSide = representativeSide;
+  if (!pdfPaths[visibleSide]) visibleSide = pdfPaths.right && !pdfPaths.left ? 'right' : 'left';
+  view.dataset.readerSide = visibleSide;
+  view.classList.toggle('show-summary', showSummary);
+  $('chk-summary').checked = showSummary;
+  dualView?.setPaneVisibility({
+    left: layout === 'compare' || visibleSide === 'left',
+    right: layout === 'compare' || visibleSide === 'right',
+  });
   // 패널이 숨어 있는 동안 도착한 흐름도는 폭을 못 재 렌더가 밀려 있을 수 있다.
   // 드러나는 순간 같은 탭을 한 번 더 지정해 밀린 렌더를 깨운다.
-  if (layout !== 'compare') summaryPanel?.setTab(summaryPanel.getTab());
+  if (showSummary) summaryPanel?.setTab(summaryPanel.getTab());
+  dualView?.relayout();
+  syncExplanationDoc();
+  updatePdfBtns();
 }
 function setLayout(l) {
   if (!LAYOUTS.includes(l)) return;
   layout = l;
-  try { localStorage.setItem('wc-layout', l); } catch { /* 저장 실패 무시 */ }
+  try { localStorage.setItem('wc-reader-mode', l); } catch { /* 저장 실패 무시 */ }
   applyLayout();
 }
+function toggleSummary() {
+  showSummary = !showSummary;
+  try { localStorage.setItem('wc-summary-visible', String(showSummary)); } catch { /* Storage may be unavailable. */ }
+  applyLayout();
+}
+window.wcompare.explanation.onShowSource(async source => {
+  const side = ['left', 'right'].find(side => pdfPaths[side] === source.path);
+  if (!side) return;
+  representativeSide = side;
+  applyLayout();
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  dualView?.jumpToSource(side, source.page);
+});
 
 // ===== markdown TOC (diff 모드) =====
 // 열림 상태는 세션 한정 — PDF outline과 대칭(localStorage 불필요).
@@ -185,6 +226,9 @@ function ensureDualView() {
   });
   // 요약 패널은 dualView가 만든 .pdf-panes와 형제로 붙는다(네 번째 열).
   // 던진 오류는 패널이 스스로 인라인 표시하므로 여기서 try/catch로 감싸지 않는다.
+  explanationPanel = createExplanationPanel($('pdfview'), {
+    getPages: p => dualView.getPageTexts(pdfPaths.left === p ? 'left' : 'right'),
+  });
   summaryPanel = createSummaryPanel($('pdfview'), {
     onGenerate: () => generateSummary([summaryPanel.getTab()]),
     onGenerateAll: () => generateSummary(),
@@ -192,7 +236,7 @@ function ensureDualView() {
       const doc = summaryDoc;
       const side = summarySide();
       if (!side) return false;
-      if (side === 'right' && layout === 'summary') setLayout('full');
+      if (layout === 'explain') { representativeSide = side; applyLayout(); }
       // Revealing the source pane triggers PDF width fitting. Navigate after that layout settles.
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       if (summaryDoc !== doc || pdfPaths[side] !== doc) return false;
@@ -305,10 +349,7 @@ async function openPdfOrThrow(side, p) {
   await dualView.openSide(side, { bytes, path: real });
   pdfPaths[side] = real;
   pdfHashes[side] = sha256;
-  // 지금 형태가 이 pane을 감추고 있으면 형태를 넓힌다. 사용자가 방금 연 문서를 숨긴 채 두지 않기
-  // 위해서다 — 특히 번역은 완료되면 반대편 pane에 결과를 여는데, 요약형(오른쪽 숨김)에서는
-  // 수 분을 기다린 번역본이 보이지 않는 열에 떨어진다.
-  if (side === 'right' && layout === 'summary') setLayout('full');
+  applyLayout();
   // 자동 복원: 이 PDF에 저장된 마커를 불러와 붙인다(단순 열기·DnD·CLI·최근 파일 모두 이 경로를 지난다).
   // 이미 메모리에 이 문서의 마커가 있으면(같은 PDF를 다른 pane에서 먼저 열어 편집 중) 덮어쓰지 않는다.
   // 프로젝트 로드는 openByPath→여기로 들어와 자동 복원하지만, onProjectLoad가 마지막에
@@ -361,12 +402,20 @@ window.addEventListener('pagehide', () => {
 // 좌우 교체 — 뷰어 문서와 경로를 함께 맞바꾼다.
 async function switchSides() {
   if (translating) return;
+  if (layout === 'explain') {
+    const next = representativeSide === 'left' ? 'right' : 'left';
+    if (pdfPaths[next]) representativeSide = next;
+    try { localStorage.setItem('wc-reader-side', representativeSide); } catch { /* Storage may be unavailable. */ }
+    applyLayout();
+    return;
+  }
   await dualView?.switchSides();
   [pdfPaths.left, pdfPaths.right] = [pdfPaths.right, pdfPaths.left];
   [pdfHashes.left, pdfHashes.right] = [pdfHashes.right, pdfHashes.left];
   // 요약 대상은 "왼쪽 우선"이라 교체와 함께 바뀐다 → 패널도 새 대상 문서로 다시 묶는다.
   // 빠뜨리면 닫힌 뒤에도 앞 문서 요약이 남아 새 문서용 생성 버튼이 사라진다.
   await syncSummaryToDoc();
+  applyLayout();
   updatePdfBtns();
 }
 
@@ -436,7 +485,7 @@ async function collectSummaryMaterial(side) {
 
 // 첫 생성은 선택한 탭 하나. 전체 만들기만 네 탭을 순서대로 요청한다.
 // 재생성하지 않은 캐시와 실패한 탭의 기존 내용은 보존한다.
-async function generateSummary(kinds = SUMMARY_KINDS) {
+async function generateSummary(kinds = SUMMARY_KINDS, { strict = false } = {}) {
   // 호출자가 뭘 넘기든 SUMMARY_KINDS의 부분집합으로만 좁힌다 — 낯선 kind나 중복이 그대로
   // 진행률 분모·저장 경로까지 흘러들지 않게(방어적 필터링), 순서도 SUMMARY_KINDS 기준으로 고정.
   kinds = SUMMARY_KINDS.filter((k) => kinds.includes(k));
@@ -521,11 +570,13 @@ async function generateSummary(kinds = SUMMARY_KINDS) {
     // 채워져 있어 내용 검사는 항상 참이 되고, 그대로 두면 실패만 한 재생성이 내용은 같은 파일을
     // 다시 쓰면서 meta.truncated만 이번 실행 값(false)으로 조용히 뒤집어 놓는다.
     if (produced) {
-      window.wcompare.summary.save(docPath, parts, { truncated, readingVersions })
-        .catch((e) => console.warn('요약 저장 실패(무시):', e?.message || e));
+      await window.wcompare.summary.save(docPath, parts, { truncated, readingVersions })
+        .catch((e) => { if (strict) throw e; console.warn('요약 저장 실패(무시):', e?.message || e); });
     }
   }
   if (failed.length) throw new Error(failed.join('\n'));
+  if (strict && !alive()) throw new Error('문서가 바뀌어 요약 작업이 중단되었습니다.');
+  return { path: docPath, kinds, truncated };
 }
 
 // 요약 내보내기(복사/저장). 마크다운 조립은 main의 summaryExport.js 한 곳에서만 한다 —
@@ -677,16 +728,18 @@ function updatePdfBtns() {
   }
   const s = $('btn-switch');
   if (s) {
-    s.disabled = translating || !any;
-    s.title = translating ? '번역 중에는 교체할 수 없습니다' : '좌우 화면을 서로 바꿉니다';
+    s.disabled = translating || (layout === 'explain' ? loadedPdfSides().length < 2 : !any);
+    s.title = translating ? '번역 중에는 교체할 수 없습니다' : layout === 'explain' ? '표시할 원문 / 번역본을 전환합니다' : '좌우 화면을 서로 바꿉니다';
+    s.textContent = layout === 'explain' ? '⇄ 원문 / 번역' : '⇄ Switch';
   }
 }
 
 // force=true면 이미 번역본이 있어도 새로 만든다(⌥+클릭). 기본은 기존 번역본 재사용.
-async function translatePdf(force = false) {
+async function translatePdf(force = false, { strict = false, sourcePath } = {}) {
+  if (strict && translating) throw new Error('번역이 이미 진행 중입니다.');
   if (translating) { await window.wcompare.cancelTranslate(); return; }
-  const [side] = loadedPdfSides();
-  if (!side) return;
+  const side = sourcePath ? loadedPdfSides().find(side => pdfPaths[side] === sourcePath) : loadedPdfSides()[0];
+  if (!side) { if (strict) throw new Error('번역할 PDF를 찾을 수 없습니다.'); return; }
   const src = pdfPaths[side];
   directCodexPdf = $('set-translate-engine').value === 'codex';
 
@@ -703,14 +756,19 @@ async function translatePdf(force = false) {
   translateTimer = setInterval(() => { if (translating) showTranslateProgress(); }, 1000); // 경과 시간을 매초 갱신
   try {
     const res = await window.wcompare.translatePdf({ path: src, force });
-    await openPdf(translateTarget, res.output);
+    await openPdfOrThrow(translateTarget, res.output);
     // 이미 만들어 둔 번역본은 묻지 않고 그대로 연다. 번역은 페이지마다 LLM을 부르는 작업이라
     // 논문 하나에 수 분이 걸리므로, 되묻는 순간 실수로 같은 일을 다시 시키기 쉽다.
     // 다시 만들고 싶으면 ⌥(Alt)를 누른 채 번역 버튼을 누른다(버튼 툴팁에 안내).
     // 안내는 openPdf 뒤에 쓴다 — openPdf가 setMode('pdf')를 지나며 상태줄을 비우기 때문.
     if (res.existed) setStatus(`기존 번역본을 재사용했습니다: ${res.output.split('/').pop()}`);
-    if (res.partial) alert('일부 페이지는 번역에 실패해 원문 그대로 유지되었습니다.');
+    if (res.partial) {
+      if (strict) throw new Error('일부 페이지의 번역에 실패했습니다. 결과 PDF에 원문 페이지가 남아 있습니다.');
+      alert('일부 페이지는 번역에 실패해 원문 그대로 유지되었습니다.');
+    }
+    return res;
   } catch (e) {
+    if (strict) throw e;
     alert('번역 실패: ' + (e?.message || e));
   } finally {
     clearInterval(translateTimer);
@@ -843,6 +901,7 @@ async function closeFile(side) {
     pdfPaths[side] = null;
     pdfHashes[side] = null;
     await syncSummaryToDoc(); // 닫힌 문서가 요약의 주인이었으면 남은 문서로 갈아 끼우고, 없으면 비운다
+    applyLayout();
     updatePdfBtns();
     refreshTranslationInfo();
   } else {
@@ -911,6 +970,7 @@ async function reloadFiles() {
       if (mode !== 'pdf' || paths.some(([side, p]) => pdfPaths[side] !== p)) return;
       await dualView.reloadSides(files);
       for (const file of files) pdfHashes[file.side] = file.sha256;
+      syncExplanationDoc();
       const changedSummary = files.find(file => file.path === summaryDoc && previousHashes[file.side] !== file.sha256);
       if (changedSummary) {
         // 경로가 같아도 내용이 바뀌었으면 이전 논문 요약을 새 PDF의 설명처럼 보여주지 않는다.
@@ -1024,6 +1084,7 @@ $('btn-toc').onclick = () => {
 };
 $('btn-dict').onclick = () => toggleDict();
 for (const l of LAYOUTS) $(`btn-layout-${l}`).onclick = () => setLayout(l);
+$('chk-summary').onchange = () => toggleSummary();
 
 // ===== 커스텀 토글 단축키 =====
 // shortcuts는 액션(dict/fit/sync/night/switch)→표현문자열 맵. 시작 시 설정에서 로드하고,
@@ -1902,7 +1963,12 @@ const MENU = {
   'menu:toggle-dict': () => toggleDict(),
   'menu:settings': () => openSettings(),
 };
-window.wcompare.onMenu((ch) => { MENU[ch]?.(); });
+window.wcompare.onMenu((ch) => {
+  if (ch === 'menu:layout-compare') { setMode('pdf'); setLayout('compare'); }
+  if (ch === 'menu:layout-explain') { setMode('pdf'); setLayout('explain'); }
+  if (ch === 'menu:toggle-summary') toggleSummary();
+  MENU[ch]?.();
+});
 
 // 최근 파일(메뉴): main이 allowlist에 등록한 경로를 보낸다. 빈 pane을 골라 연다.
 window.wcompare.onOpenRecentFile((p) => {
@@ -1954,3 +2020,75 @@ window.__wc = { editorApi, getMode: () => mode, isMdTocOpen: () => mdTocOpen, is
   memoMain: () => memoView?.mainSide() ?? null };
 
 initModernUX();
+
+// MCP requests use the same actions and progress controls as the visible app.
+const controlState = () => ({
+  mode, layout, summary_visible: showSummary,
+  files: loadedPdfSides().map(side => ({ side, path: pdfPaths[side], sha256: pdfHashes[side], pages: pdfState?.[side]?.count || 0 })),
+});
+const originalPdfPath = () => Object.values(pdfPaths).find(p => p && !/\.ko\.pdf$/i.test(p)) || pdfPaths.left || pdfPaths.right;
+const controlActions = {
+  state: controlState,
+  open: async ({ path }) => {
+    if (loadedPdfSides().length) throw new Error('문서가 있는 창에는 덮어쓸 수 없습니다. 새 창을 사용하세요.');
+    await openPdfOrThrow('left', path);
+    return controlState();
+  },
+  view: ({ layout: nextLayout, summary_visible, document }) => {
+    setMode('pdf');
+    if (nextLayout) setLayout(nextLayout);
+    if (typeof summary_visible === 'boolean' && summary_visible !== showSummary) toggleSummary();
+    if (document) {
+      const wanted = document === 'original' ? originalPdfPath() : Object.values(pdfPaths).find(p => /\.ko\.pdf$/i.test(p || ''));
+      const side = loadedPdfSides().find(side => pdfPaths[side] === wanted);
+      if (!side) throw new Error('요청한 문서가 이 창에 열려 있지 않습니다.');
+      representativeSide = side;
+      applyLayout();
+    }
+    return controlState();
+  },
+  translate: async ({ force }) => {
+    setMode('pdf');
+    setLayout('compare');
+    return translatePdf(force, { strict: true, sourcePath: originalPdfPath() });
+  },
+  explain: async ({ force }) => {
+    setMode('pdf'); setLayout('explain');
+    await syncExplanationDoc();
+    return explanationPanel.generate(force, { strict: true });
+  },
+  summarize: async ({ force, kinds = SUMMARY_KINDS }) => {
+    setMode('pdf');
+    if (!showSummary) toggleSummary();
+    await syncSummaryToDoc();
+    const cached = await window.wcompare.summary.load(summaryDoc);
+    const missing = force ? kinds : kinds.filter(kind => !cached.parts?.[kind]);
+    if (!missing.length) return { path: summaryDoc, kinds, reused: true };
+    window.wcompare.control.progress({ operation: 'summarize', message: '논문 요약을 생성하는 중…' });
+    return generateSummary(missing, { strict: true });
+  },
+  cancel: async ({ operation }) => {
+    if (operation === 'translate') await window.wcompare.cancelTranslate();
+    if (operation === 'explain') await explanationPanel?.cancel();
+    if (operation === 'summarize') {
+      summaryRun++;
+      await window.wcompare.cancelSummarize();
+      summaryPanel?.setBusy(null);
+    }
+    return { cancelled: true };
+  },
+};
+window.wcompare.control.onRequest(async ({ id, action, params }) => {
+  try {
+    if (!Object.hasOwn(controlActions, action)) throw new Error('알 수 없는 앱 제어 명령입니다.');
+    const result = await controlActions[action](params || {});
+    window.wcompare.control.reply({ id, result });
+  } catch (error) { window.wcompare.control.reply({ id, error: ipcMessage(error) }); }
+});
+window.wcompare.onTranslateProgress(progress => window.wcompare.control.progress({
+  operation: 'translate', done: progress.done, message: 'PDF 번역 중…',
+}));
+window.wcompare.explanation.onProgress(progress => window.wcompare.control.progress({
+  operation: 'explain', message: progress.message,
+}));
+window.wcompare.control.ready();

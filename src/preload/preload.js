@@ -1,6 +1,12 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('wcompare', {
+  control: {
+    ready: () => ipcRenderer.send('control:ready'),
+    reply: reply => ipcRenderer.send('control:reply', reply),
+    progress: progress => ipcRenderer.send('control:progress', progress),
+    onRequest: callback => ipcRenderer.on('control:request', (_event, request) => callback(request)),
+  },
   openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
   readFile: (path) => ipcRenderer.invoke('file:read', path),
   readBytes: (path) => ipcRenderer.invoke('file:readBytes', path),
@@ -23,6 +29,13 @@ contextBridge.exposeInMainWorld('wcompare', {
   // 논문 요약: 본문 텍스트는 렌더러가 뽑아 보낸다(pdf.js가 렌더러에만 있다). 경로는 main이 검문한다.
   summarize: (payload) => ipcRenderer.invoke('pdf:summarize', payload),
   cancelSummarize: () => ipcRenderer.invoke('pdf:summarize:cancel'),
+  explanation: {
+    load: path => ipcRenderer.invoke('explanation:load', path),
+    generate: payload => ipcRenderer.invoke('explanation:generate', payload),
+    cancel: () => ipcRenderer.invoke('explanation:cancel'),
+    onProgress: cb => ipcRenderer.on('explanation:progress', (_event, progress) => cb(progress)),
+    onShowSource: cb => ipcRenderer.on('explanation:show-source', (_event, source) => cb(source)),
+  },
   summary: {
     load: (path) => ipcRenderer.invoke('summary:load', path),
     save: (path, parts, meta) => ipcRenderer.invoke('summary:save', path, parts, meta),
@@ -112,6 +125,7 @@ contextBridge.exposeInMainWorld('wcompare', {
       'menu:project-save', 'menu:project-save-as',
       'menu:next-diff', 'menu:prev-diff', 'menu:toggle-ws', 'menu:toggle-vim', 'menu:toggle-theme',
       'menu:toggle-night', 'menu:toggle-dict', 'menu:settings',
+      'menu:layout-compare', 'menu:layout-explain', 'menu:toggle-summary',
     ];
     channels.forEach((ch) => ipcRenderer.on(ch, () => cb(ch)));
   },

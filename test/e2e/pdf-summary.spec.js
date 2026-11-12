@@ -1,4 +1,4 @@
-// test/e2e/pdf-summary.spec.js — 보기 형태 3종(대조/요약/3분할) + 탭형 논문 요약 패널.
+// test/e2e/pdf-summary.spec.js — 선택형 요약과 탭형 논문 요약 패널.
 // 실제 LLM은 부르지 않는다: 프롬프트에서 요약 종류를 알아내 고정 응답을 돌려주는 가짜 agy를
 // WCOMPARE_AGY로 주입한다(transpaper e2e의 stubTranspaper와 같은 관용구).
 const { test, expect, _electron: electron } = require('@playwright/test');
@@ -93,38 +93,22 @@ async function launch(env, args, storageDir) {
   return { app, win };
 }
 
-test('보기 형태 3종: 대조 / 요약 / 3분할이 열의 표시를 바꾼다', async () => {
+test('요약 체크박스는 대조 문서 쌍을 유지하며 패널을 표시한다', async () => {
   const { dir, a, b, storageDir, agy } = setup('layout');
-  const { app, win } = await launch(
-    { ...process.env, WCOMPARE_AGY: agy }, [a, b], storageDir);
-  await win.waitForSelector(`${R} canvas`, { timeout: 20000 });
-
-  // 대조: 좌우 pane만, 요약 패널은 숨김
-  await win.click('#btn-layout-compare');
-  await expect(win.locator(L)).toBeVisible();
-  await expect(win.locator(R)).toBeVisible();
-  await expect(win.locator(S)).toBeHidden();
-  await expect(win.locator('#btn-layout-compare')).toHaveClass(/on/);
-
-  // 요약: 오른쪽 pane을 감추고 요약 패널을 보인다
-  await win.click('#btn-layout-summary');
-  await expect(win.locator(R)).toBeHidden();
-  await expect(win.locator(L)).toBeVisible();
-  await expect(win.locator(S)).toBeVisible();
-
-  // 3분할: 셋 다
-  await win.click('#btn-layout-full');
-  await expect(win.locator(L)).toBeVisible();
-  await expect(win.locator(R)).toBeVisible();
-  await expect(win.locator(S)).toBeVisible();
-  expect(await win.evaluate(() => window.__wc.getLayout())).toBe('full');
-
-  // 형태를 오가도 열려 있던 문서는 그대로다 (레이아웃은 표시 여부만 바꾼다)
-  await expect(win.locator(`${L} canvas`)).not.toHaveCount(0);
-  await expect(win.locator(`${R} canvas`)).not.toHaveCount(0);
-
-  await app.close();
-  fs.rmSync(dir, { recursive: true, force: true });
+  const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a, b], storageDir);
+  try {
+    await win.waitForSelector(`${R} canvas`, { timeout: 20000 });
+    await win.locator('#chk-summary').uncheck();
+    await expect(win.locator(S)).toBeHidden();
+    await win.locator('#chk-summary').check();
+    await expect(win.locator(S)).toBeVisible();
+    await expect(win.locator(L)).toBeVisible();
+    await expect(win.locator(R)).toBeVisible();
+    await win.locator('#chk-summary').uncheck();
+    await expect(win.locator(S)).toBeHidden();
+    await expect(win.locator(`${L} canvas`)).not.toHaveCount(0);
+    await expect(win.locator(`${R} canvas`)).not.toHaveCount(0);
+  } finally { await app.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('요약 생성: 세 탭이 채워지고 흐름도는 mermaid SVG로 그려진다', async () => {
@@ -132,7 +116,7 @@ test('요약 생성: 세 탭이 채워지고 흐름도는 mermaid SVG로 그려�
   const { app, win } = await launch(
     { ...process.env, WCOMPARE_AGY: agy }, [a], storageDir);
 
-  await win.click('#btn-layout-summary');
+  await win.locator('#chk-summary').check();
   await expect(win.locator(`${S} .sum-empty-go`)).toBeVisible();
   await win.click(`${S} .sum-all`);
 
@@ -167,7 +151,7 @@ test('재생성: 활성 탭 하나만 다시 만들고 나머지 탭의 캐시�
   const { app, win } = await launch(
     { ...process.env, WCOMPARE_AGY: agy }, [a], storageDir);
 
-  await win.click('#btn-layout-summary');
+  await win.locator('#chk-summary').check();
   await win.click(`${S} .sum-all`);
 
   // 최초 생성: 세 탭 모두 채워질 때까지 기다린다("다시 생성" 버튼이 풀리면 완료).
@@ -220,7 +204,7 @@ test('요약 캐시: 문서를 닫았다 다시 열면 재생성 없이 복원�
   const { app, win } = await launch(
     { ...process.env, WCOMPARE_AGY: agy }, [a], storageDir);
 
-  await win.click('#btn-layout-summary');
+  await win.locator('#chk-summary').check();
   await win.click(`${S} .sum-all`);
   await expect(win.locator(`${S} .sum-pane[data-kind=overview]`))
     .toContainText('한 줄짜리 개요 본문', { timeout: 25000 });
@@ -259,7 +243,7 @@ test('회귀: 패널이 숨겨진 사이에 도착한 흐름도도 다시 보일
   const { app, win } = await launch(
     { ...process.env, WCOMPARE_AGY: agy }, [a], storageDir);
 
-  await win.click('#btn-layout-summary');
+  await win.locator('#chk-summary').check();
   await win.click(`${S} .sum-all`);
   // Overview가 오면 탭이 overview로 바뀐다 → 그 뒤에 흐름도 탭으로 옮겨 둔다
   await expect(win.locator(`${S} .sum-pane[data-kind=overview]`))
@@ -267,8 +251,8 @@ test('회귀: 패널이 숨겨진 사이에 도착한 흐름도도 다시 보일
   await win.click(`${S} .sum-tab[data-kind=flow]`);
   expect(await win.evaluate(() => window.__wc.summaryTab())).toBe('flow');
 
-  // 흐름도가 아직 오기 전에 패널을 감춘다 (대조형)
-  await win.click('#btn-layout-compare');
+  // 흐름도가 아직 오기 전에 패널을 감춘다
+  await win.locator('#chk-summary').uncheck();
   await expect(win.locator(S)).toBeHidden();
 
   // 숨어 있는 동안 생성이 끝난다
@@ -277,7 +261,7 @@ test('회귀: 패널이 숨겨진 사이에 도착한 흐름도도 다시 보일
     { timeout: 30000 }).toBe(true);
 
   // 다시 보이게 하면 밀려 있던 흐름도가 그려져야 한다
-  await win.click('#btn-layout-full');
+  await win.locator('#chk-summary').check();
   const svg = win.locator(`${S} .sum-pane[data-kind=flow] svg`);
   await expect(svg).toHaveCount(1, { timeout: 15000 });
   expect(await svg.evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(10);
@@ -296,7 +280,7 @@ test('회귀: 요약 생성 중에 문서를 닫으면 잠금이 곧바로 풀�
   const { server, base } = await startServer(makePdf(3, { height: 900, lines: 5 }));
   const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a], storageDir);
 
-  await win.click('#btn-layout-summary');
+  await win.locator('#chk-summary').check();
   await win.click(`${S} .sum-all`);
   await expect(win.locator(`${S} .sum-empty-go`)).toBeDisabled(); // 실행 중이니 잠기는 게 정상
 
@@ -327,7 +311,7 @@ test('요약은 side가 아니라 문서를 따라간다 — Switch해도 읽던
   const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a, b], storageDir);
   await win.waitForSelector(`${R} canvas`, { timeout: 20000 });
 
-  await win.click('#btn-layout-full');
+  await win.locator('#chk-summary').check();
   await win.click(`${S} .sum-all`); // 왼쪽(a)의 요약을 만든다
   const ov = `${S} .sum-pane[data-kind=overview]`;
   await expect(win.locator(ov)).toContainText('한 줄짜리 개요 본문', { timeout: 25000 });
@@ -387,7 +371,7 @@ test('마크다운 뷰어: LaTeX 수식이 글자로 렌더되고 표·중첩목
   const { app, win } = await launch(
     { ...process.env, WCOMPARE_AGY: stubAgyRich(dir) }, [a], storageDir);
 
-  await win.click('#btn-layout-summary');
+  await win.locator('#chk-summary').check();
   await win.click(`${S} .sum-all`);
 
   const ov = `${S} .sum-pane[data-kind=overview]`;
@@ -426,7 +410,7 @@ test('요약 뷰어 글씨 크기: A+ / A− / ↺ 가 본문과 제목을 함�
   const env = { ...process.env, WCOMPARE_AGY: stubAgyRich(dir) };
   const { app, win } = await launch(env, [a], storageDir);
 
-  await win.click('#btn-layout-summary');
+  await win.locator('#chk-summary').check();
   await win.click(`${S} .sum-all`);
   await expect(win.locator(`${S} .sum-pane[data-kind=overview]`)).toContainText('토큰 수', { timeout: 25000 });
 
@@ -458,7 +442,7 @@ test('요약 뷰어 글씨 크기: A+ / A− / ↺ 가 본문과 제목을 함�
   await app.close();
 
   const again = await launch(env, [a], storageDir);
-  await again.win.click('#btn-layout-summary');
+  await again.win.locator('#chk-summary').check();
   await expect
     .poll(() => again.win.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.sum-body')).fontSize)))
     .toBe(kept);
@@ -499,7 +483,7 @@ test('요약 TOC: 절별 요약 탭에서만 보이고 depth로 항목 수가 �
   const { app, win } = await launch(
     { ...process.env, WCOMPARE_AGY: stubAgyDeep(dir) }, [a], path.join(dir, 'storage'));
 
-  await win.click('#btn-layout-summary');
+  await win.locator('#chk-summary').check();
   await win.click(`${S} .sum-all`);
   await expect(win.locator(`${S} .sum-regen`)).toBeEnabled({ timeout: 25000 });
 
@@ -555,7 +539,7 @@ test('요약 내보내기: 복사는 클립보드에, 저장은 고른 경로에
   const { dir, a, storageDir, agy } = setup('export');
   const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a], storageDir);
 
-  await win.click('#btn-layout-summary');
+  await win.locator('#chk-summary').check();
   // 내용이 없을 때는 동작 버튼 줄 자체가 없다 — 빈 요약에 대고 복사·저장할 것이 없다.
   await expect(win.locator(`${S} .sum-copy`)).toBeHidden();
   await win.click(`${S} .sum-all`);
@@ -612,7 +596,7 @@ test('회귀: 라이트 테마에서 흐름도의 글씨가 배경에 묻히지 
   const { dir, a, storageDir, agy } = setup('flowtheme');
   const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a], storageDir);
 
-  await win.click('#btn-layout-summary');
+  await win.locator('#chk-summary').check();
   await win.click(`${S} .sum-all`);
   await win.click(`${S} .sum-tab[data-kind=flow]`);
   await expect(win.locator(`${S} .sum-pane[data-kind=flow] svg`)).toHaveCount(1, { timeout: 25000 });
@@ -671,7 +655,7 @@ test('요약 TOC 접기: 접으면 목록이 숨고 손잡이는 남아 다시 �
   const { dir, a, storageDir, agy } = setup('tocfold');
   const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a], storageDir);
 
-  await win.click('#btn-layout-summary');
+  await win.locator('#chk-summary').check();
   await win.click(`${S} .sum-all`);
   await expect(win.locator(`${S} .sum-regen`)).toBeEnabled({ timeout: 25000 });
   await win.click(`${S} .sum-tab[data-kind=sections]`);
@@ -707,7 +691,7 @@ test('요약 폭 조절: 스플리터를 끌면 폭이 바뀌고 어느 쪽도 0
   // 빈 그림을 그린다. 끝까지 끌어도 두 쪽이 모두 살아 있어야 한다.
   const { dir, a, b, storageDir, agy } = setup('split');
   const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a, b], storageDir);
-  await win.click('#btn-layout-full');
+  await win.locator('#chk-summary').check();
 
   const split = win.locator('.pane-split');
   await expect(split).toBeVisible();
@@ -732,8 +716,8 @@ test('요약 폭 조절: 스플리터를 끌면 폭이 바뀌고 어느 쪽도 0
   // 뷰어도 살아 있다.
   expect((await win.locator(L).boundingBox()).width).toBeGreaterThan(0);
 
-  // 대조형에서는 요약이 숨으므로 손잡이도 함께 숨어야 한다(허공에 손잡이가 남으면 안 된다).
-  await win.click('#btn-layout-compare');
+  // 요약을 숨기면 폭 조절 손잡이도 함께 숨긴다.
+  await win.locator('#chk-summary').uncheck();
   await expect(split).toBeHidden();
 
   await app.close();
@@ -747,7 +731,7 @@ test('단계별 읽기: 기본 한 번 생성, 선택한 탭만 추가, 근거 �
   fs.writeFileSync(agy, '#!/bin/sh\necho call >> "' + log + '"\ncat "' + path.join(dir, 'reply.md') + '"\n', { mode: 0o755 });
   const { app, win } = await launch({ ...process.env, WCOMPARE_AGY: agy }, [a, b], storageDir);
   try {
-    await win.click('#btn-layout-summary');
+    await win.locator('#chk-summary').check();
     await win.click(`${S} .sum-empty-go`);
     const overview = win.locator(`${S} .sum-pane[data-kind=overview]`);
     await expect(overview).toContainText('작은 입력');
@@ -763,7 +747,7 @@ test('단계별 읽기: 기본 한 번 생성, 선택한 탭만 추가, 근거 �
     await win.click('#btn-switch');
     await overview.locator('a[href="#paper-page-3"]').click();
     await expect(win.locator('#pdf-status')).toContainText('R 3/4');
-    await expect(win.locator('#btn-layout-full')).toHaveClass(/on/);
+    await expect(win.locator('#chk-summary')).toBeChecked();
     await overview.getByText('잘못된 페이지').click();
     await expect(win.locator(`${S} .sum-err`)).toContainText('페이지');
     await win.click(`${S} .sum-tab[data-kind=narrative]`);

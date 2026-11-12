@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "files": {
+    "assets/site/app.js": "a7b1e6835eb89ea15c3a92c3e223228c8b7ae1364181eb53f36ad34a5148f538",
+    "assets/site/design-tokens.css": "6aebfa121dce2a0a59de5c646d3c03f89c5463aa6f340a21e22c9d01612d6741",
+    "assets/site/fonts/NotoSansKR-OFL.txt": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+    "assets/site/fonts/NotoSansKR.woff2": "f484190a87503ac2af2cf9771ec35122128453fe0cd92f4368117562d99547e6",
+    "assets/site/fonts/NotoSerifKR-OFL.txt": "5e0da210fb04058a8c0087985d2d456b931c2579811a49655721d3cf0c36b6d6",
+    "assets/site/fonts/NotoSerifKR.woff2": "e873199ed8f2a76e32c7239e877c6d0e89ed06d0df73bc4d718e3ddd05c2fa00",
+    "assets/site/fonts/STIXTwoMath-OFL.txt": "0c8825913b60d858aacdb33c4ca6660a7d64b0d6464702efbb19313f5765861a",
+    "assets/site/fonts/STIXTwoMath.ttf": "562551b15b836e6e01d1b7350909baf3c8c8d83260c1190fbf4544333e6936de",
+    "assets/site/fonts/sources.json": "603feac22c4ee1ec4367ba3610230f03f3351c79aef8c39efbdb150d139867bf",
+    "assets/site/fonts.css": "0abf9a5c45af90feb01adb24b63ea1bf18d981105c7aeed2993609c01c4da76e",
+    "assets/site/index.html": "7da7e0247d5e419e3d909771ec78052b11ce48a494727ef2c3f827b30c16d66b",
+    "assets/site/reading-core.js": "21f6d2f50a51c16022fd5296bd578907bdeed863ddaa5f1788a5b5e238b14cd4",
+    "assets/site/reading-position.js": "8612a2fb8707b0e11d7c7302d7f0a34ab59598a0e7b8d96295976a2977766b77",
+    "assets/site/reading-tools.css": "bed23539c0bdb23e61d786e7a91912a4997c1ab4700e11a89045ea3ee04d0d1a",
+    "assets/site/reading-tools.js": "c8eb1f202ef8c18d813fdbcfb9c7e61a4c3ad67abbd258fe1ad477eeebe989fa",
+    "assets/site/styles.css": "4f23bfa5a7850d43b57bf3b277e1004c5ddab71b9604c77d958b0170b5d3e409"
+  }
+}

@@ -25,6 +25,9 @@ const openFiles = require('./openFiles.js');
 const settings = require('./settings.js');
 const { createTranslationJobs } = require('./translationJobs.js');
 const { getPdfHandler, setPdfHandler } = require('./defaultApp.js');
+const paperExplanation = require('./paperExplanation');
+const { exposeReader } = require('./explanationProtocol');
+const explanationJobs = new Map();
 
 // 형광펜 팔레트. 렌더러 pdfMarkers의 기본 노랑과 같은 투명도(0.45) 계열.
 const HIGHLIGHT_COLORS = [
@@ -486,6 +489,38 @@ function registerIpc() {
     return { ok: true };
   });
 
+  ipcMain.handle('explanation:load', (_e, rawPath) => {
+    const p = normalize(rawPath);
+    if (!openedPdfs.has(p)) throw new Error('이 세션에서 연 PDF가 아닙니다.');
+    const id = paperExplanation.identity(p);
+    const result = paperExplanation.load(settings.dirFor('explanations'), id);
+    return result ? exposeReader(result, p) : null;
+  });
+  ipcMain.handle('explanation:generate', async (event, { path: rawPath, force = false, sourcePages } = {}) => {
+    const p = normalize(rawPath);
+    if (!openedPdfs.has(p)) throw new Error('이 세션에서 연 PDF가 아닙니다.');
+    const wcId = event.sender.id;
+    if (explanationJobs.has(wcId)) throw new Error('이 창에서 설명을 생성하고 있습니다.');
+    const id = paperExplanation.identity(p);
+    const dir = settings.dirFor('explanations');
+    const cached = !force && paperExplanation.load(dir, id);
+    if (cached) return exposeReader(cached, p);
+    for (const entry of explanationJobs.values()) {
+      if (entry.key === id.key) throw new Error('다른 창에서 이 논문의 설명을 생성하고 있습니다. 완료 후 다시 열어 주세요.');
+    }
+    const job = paperExplanation.generate(p, { dir, id, sourcePages, translateSettings: settings.get().translate,
+      onProgress: progress => {
+        if (!event.sender.isDestroyed()) event.sender.send('explanation:progress', { path: p, ...progress });
+      },
+    });
+    explanationJobs.set(wcId, { key: id.key, job });
+    try { return exposeReader(await job.promise, p); }
+    finally { explanationJobs.delete(wcId); }
+  });
+  ipcMain.handle('explanation:cancel', event => {
+    explanationJobs.get(event.sender.id)?.job.cancel();
+  });
+
   // 요약 캐시. 마커와 같은 규율 — save는 미허용 경로면 throw로 명확히 거부하고,
   // load는 조용히 빈 값을 준다(복원은 열기 직후 자동 실행이라 예외로 흐름을 끊지 않는다).
   ipcMain.handle('summary:load', (_e, rawPath) => {
@@ -614,12 +649,16 @@ function registerOpenInNewWindow(createWindow) {
 
 // 앱 종료 시 호출 — detached로 띄운 transpaper·요약 CLI(및 그 자식 agy/claude)가 살아남지 않도록.
 // 요약도 여기서 함께 정리한다: 같은 detached 관용구라 빠뜨리면 앱을 꺼도 프로세스가 남는다.
-function cancelTranslation() { jobs.cancelAll(); summaryJobs.cancelAll(); memoJobs.cancelAll(); }
+function cancelTranslation() {
+  jobs.cancelAll(); summaryJobs.cancelAll(); memoJobs.cancelAll();
+  for (const entry of explanationJobs.values()) entry.job.cancel();
+}
 
 // 특정 창이 파괴될 때 그 창의 작업만 취소한다(main.js의 webContents 'destroyed' 훅에서 호출).
 // 창이 사라질 때 호출. 파일 목록도 함께 지운다 — 남겨 두면 다음에 같은 id를 받은 창이
 // 남의 파일 경로를 메뉴에 달고 시작한다.
 function cancelForWebContents(wcId) {
+  explanationJobs.get(wcId)?.job.cancel();
   jobs.cancel(wcId); summaryJobs.cancel(wcId); memoJobs.cancel(wcId);
   openFiles.clear(wcId);
 }

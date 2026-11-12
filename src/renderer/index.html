@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy"
-  content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'" />
+  content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'; frame-src paper:" />
 <link rel="stylesheet" href="./app.css" />
 <link rel="stylesheet" href="./pdf_viewer.css" />
 <!-- KaTeX: 논문 요약에 섞여 오는 수식($N$, $$…$$)을 글자로 그린다. 폰트는 dist/renderer/fonts/에
@@ -181,17 +181,28 @@
   .pdf-pane { flex:1; position:relative; min-width:0; border-right:1px solid var(--border-faint); display:flex; }
   .pdf-pane:last-child { border-right:none; }
 
-  /* 보기 형태 3종 — 어떤 열을 보여줄지만 CSS로 끊는다. 문서 로드 상태는 건드리지 않으므로
+  /* 대조·설명과 선택형 요약은 표시할 열만 바꾼다. 문서 로드 상태는 유지하므로
      형태를 오가도 열려 있던 PDF·마커·스크롤 위치가 그대로 유지된다.
      숨긴 pane은 폭이 0이라 비율 동기·page-width 계산에서 빼야 한다 → dualView.setPaneVisible 참고. */
-  #pdfview.layout-compare .pdf-summary, #pdfview.layout-compare .pane-split { display:none; }
+  #pdfview:not(.show-summary) .pdf-summary, #pdfview:not(.show-summary) .pane-split { display:none; }
+  #pdfview.layout-compare .pdf-explanation { display:none; }
+  #pdfview.layout-explain[data-reader-side=left] .pdf-pane[data-side=right],
+  #pdfview.layout-explain[data-reader-side=right] .pdf-pane[data-side=left] { display:none; }
+  .pdf-explanation { flex:1.5; min-width:220px; display:flex; flex-direction:column; border-left:1px solid var(--border); background:var(--bg-panel); }
+  .explanation-header { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:8px 12px; border-bottom:1px solid var(--border); }
+  .explanation-header button { color:var(--fg); background:var(--bg-btn); border:1px solid var(--border); border-radius:6px; padding:5px 9px; cursor:pointer; }
+  .explanation-header button:disabled { opacity:.5; cursor:default; }
+  .explanation-status { flex:1; min-width:120px; font-size:12px; overflow-wrap:anywhere; }
+  .explanation-empty { flex:1; display:grid; place-items:center; padding:24px; color:var(--fg-dim); text-align:center; }
+  .pdf-explanation iframe { width:100%; flex:1; min-height:0; border:0; background:#fbfaf6; }
+  .pdf-explanation [hidden] { display:none; }
+  .summary-option { display:inline-flex; align-items:center; gap:5px; margin:0 10px; cursor:pointer; }
   /* 요약 폭 조절 손잡이. 실제 폭은 4px지만 잡기 쉬우라고 좌우로 2px씩 넘겨 히트 영역을 넓힌다
      (margin 음수 + 그만큼의 투명 border가 아니라, 단순히 폭을 주고 배경만 가운데 1px에 그린다).
      drag 중에는 pointer capture가 걸려 손이 손잡이를 앞질러도 이벤트를 놓치지 않는다. */
   .pane-split { flex:0 0 5px; cursor:col-resize; background:var(--border-faint);
     background-clip:content-box; border-left:2px solid transparent; border-right:2px solid transparent; }
   .pane-split:hover, .pane-split.dragging { background-color:var(--accent); }
-  #pdfview.layout-summary .pdf-pane[data-side=right] { display:none; }
   #mode-switch { display:inline-flex; }
   #mode-switch button { border-radius:0; }
   #mode-switch button:first-child { border-radius:4px 0 0 4px; }
@@ -389,7 +400,7 @@
   /* 최소 폭을 110px에서 낮춘 이유: 요약 폭이 이제 사용자 값이라 예전 clamp 하한(300px)보다
      좁아질 수 있는데, 그때 목차가 110px를 고집하면 본문이 패널의 절반 아래로 밀린다(실측 126/260).
      좁을수록 목차가 먼저 양보해야 한다 — 본문이 읽히지 않으면 목차만 남아 봐야 소용이 없다. */
-  .sum-toc { flex:0 0 clamp(92px, 32%, 180px); display:none; overflow:auto;
+  .sum-toc { flex:0 0 clamp(64px, 28%, 180px); display:none; overflow:auto;
     border-left:1px solid var(--border-faint); background:var(--bg-drawer); color:var(--fg-muted);
     font:12px sans-serif; padding:4px; }
   .sum-toc.show { display:block; }
@@ -579,9 +590,9 @@
       <span class="tb-break"></span>
       <span id="pdf-layout">
         <button id="btn-layout-compare" title="원문 | 번역 대조">대조</button>
-        <button id="btn-layout-summary" title="원문 | 논문 요약">요약</button>
-        <button id="btn-layout-full" title="원문 | 번역 | 논문 요약">3분할</button>
+        <button id="btn-layout-explain" title="원문 / 번역 전환 · paper-helper 설명">설명</button>
       </span>
+      <label class="summary-option"><input id="chk-summary" type="checkbox">요약</label>
       <button id="btn-fit">Fit: ON</button>
       <button id="btn-sync">Sync: ON</button>
       <button id="btn-night" title="야간 모드: PDF 페이지 색 반전">Night: OFF</button>
